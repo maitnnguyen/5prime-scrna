@@ -1,0 +1,24 @@
+# Large data
+*.fastq
+*.fastq.gz
+*.bam
+*.sam
+
+# Indexes
+*.bai
+*.csi
+
+# STAR outputs
+*Log.out
+*Log.progress.out
+*SJ.out.tab
+*Aligned.out.bam
+
+# Nextflow / pipeline junk
+work/
+.nextflow*
+results/
+
+# OS junk
+.DS_Store
+
