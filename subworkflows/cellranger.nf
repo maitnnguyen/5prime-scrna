@@ -224,10 +224,10 @@ workflow {
 
     // Print completion
     CELLRANGER_COUNT.out.web_summary.view { sample_id, html ->
-        "✅ GEX ${sample_id} complete"
+        "GEX ${sample_id} complete"
     }
     CELLRANGER_VDJ.out.web_summary.view { sample_id, html ->
-        "✅ BCR ${sample_id} complete"
+        "BCR ${sample_id} complete"
     }
 }
 
