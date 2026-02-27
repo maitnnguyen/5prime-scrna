@@ -249,14 +249,23 @@ process {
 
 // Profiles
 profiles {
+    
     slurm {
         process.executor = 'slurm'
         process.queue    = 'normal'
-        singularity.enabled = true
+        singularity {
+            enabled    = true
+            autoMounts = true
+            cacheDir   = params.container_cache
+        }
     }
     
     standard {
         process.executor = 'local'
-        singularity.enabled = true
+        singularity {
+            enabled    = true
+            autoMounts = true
+            cacheDir   = params.container_cache
+        }
     }
 }
