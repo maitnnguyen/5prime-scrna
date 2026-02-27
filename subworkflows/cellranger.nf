@@ -10,9 +10,9 @@ nextflow.enable.dsl = 2
  */
 
 // Parameters
-params.fastq_dir      = null                // Root dir containing all FASTQs
-params.transcriptome  = /home/arkku/group/ics/tools/refdata-gex-GRCh38-2024-A  // For cellranger count (GEX)
-params.vdj_reference  = /home/arkku/group/ics/tools/cellranger/refdata-cellranger-vdj-GRCh38-alts-ensembl-7.1.0  // For cellranger vdj (BCR)
+params.fastq_dirs      = null                // Root dir containing all FASTQs
+params.transcriptome  = "/home/arkku/group/ics/tools/refdata-gex-GRCh38-2024-A"  // For cellranger count (GEX)
+params.vdj_reference  = "/home/arkku/group/ics/tools/cellranger/refdata-cellranger-vdj-GRCh38-alts-ensembl-7.1.0"  // For cellranger vdj (BCR)
 params.chemistry      = "auto"
 params.outdir         = "${projectDir}/results"
 
