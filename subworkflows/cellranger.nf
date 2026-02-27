@@ -253,19 +253,15 @@ profiles {
     slurm {
         process.executor = 'slurm'
         process.queue    = 'normal'
-        singularity {
-            enabled    = true
-            autoMounts = true
-            cacheDir   = params.container_cache
-        }
+        singularity.enabled    = true
+        singularity.autoMounts = true
+        singularity.cacheDir   = params.container_cache
     }
     
     standard {
         process.executor = 'local'
-        singularity {
-            enabled    = true
-            autoMounts = true
-            cacheDir   = params.container_cache
-        }
+        singularity.enabled    = true
+        singularity.autoMounts = true
+        singularity.cacheDir   = params.container_cache
     }
 }
