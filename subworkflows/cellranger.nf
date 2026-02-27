@@ -10,16 +10,16 @@ nextflow.enable.dsl = 2
  */
 
 // Parameters
-params.fastq_dirs      = null                // Root dir containing all FASTQs
-params.transcriptome  = "/home/arkku/group/ics/tools/refdata-gex-GRCh38-2024-A"  // For cellranger count (GEX)
-params.vdj_reference  = "/home/arkku/group/ics/tools/cellranger/refdata-cellranger-vdj-GRCh38-alts-ensembl-7.1.0"  // For cellranger vdj (BCR)
+params.fastq_dirs     = null                // Comma-separated list of FASTQ dirs
+params.transcriptome  = "/home/arkku/group/ics/tools/refdata-gex-GRCh38-2024-A"
+params.vdj_reference  = "/home/arkku/group/ics/tools/cellranger/refdata-cellranger-vdj-GRCh38-alts-ensembl-7.1.0"
 params.chemistry      = "auto"
 params.outdir         = "${projectDir}/results"
 
-// Container paths (update with your actual filenames)
-params.container_cache = '/home/arkku/group/ics/tools/singularity_cache'
-params.fastqc_container     = "${params.container_cache}/fastqc.sif"        // UPDATE THIS
-params.multiqc_container    = "${params.container_cache}/multiqc.sif"       // UPDATE THIS
+// Container paths
+params.container_cache      = '/home/arkku/group/ics/tools/singularity_cache'
+params.fastqc_container     = "${params.container_cache}/fastqc.sif"
+params.multiqc_container    = "${params.container_cache}/multiqc.sif"
 params.cellranger_container = "${params.container_cache}/cellranger.sif"
 
 // FastQC
@@ -136,99 +136,48 @@ process CELLRANGER_VDJ {
     """
 }
 
-// Helper: Build sample channels
+// Helper functions
+def get_fastq_dirs() {
+    if (!params.fastq_dirs) {
+        error "Please provide --fastq_dirs 'dir1,dir2'"
+    }
+    return params.fastq_dirs.split(',').collect { it.trim() }
+}
+
 def build_gex_channel() {
-    // Get all samples WITHOUT 'BCR' in the name
+    def dirs = get_fastq_dirs()
     return Channel
-        .fromPath("${params.fastq_dir}/*_S*_L001_R1_001.fastq.gz")
-        .map { f ->
-            // Extract sample name: Control1_S1_L001_R1_001.fastq.gz → Control1
-            def matcher = (f.name =~ /^(.+?)_S\d+_L\d+_R\d+_\d+\.fastq\.gz$/)
-            if (matcher) {
-                def sample_id = matcher[0][1]
-                if (!sample_id.contains('BCR')) {
+        .fromList(dirs)
+        .flatMap { dir ->
+            file("${dir}/*_S*_L001_R1_001.fastq.gz").collect { f ->
+                def matcher = (f.name =~ /^(.+?)_S\d+_L\d+_R\d+_\d+\.fastq\.gz$/)
+                if (matcher && !f.name.contains('BCR')) {
+                    def sample_id = matcher[0][1]
                     return tuple(sample_id, f.parent)
                 }
+                return null
             }
-            return null
         }
         .filter { it != null }
-        .unique { it[0] }  // unique by sample_id
+        .unique { it[0] }
 }
 
 def build_bcr_channel() {
-    // Get all samples WITH 'BCR' in the name
+    def dirs = get_fastq_dirs()
     return Channel
-        .fromPath("${params.fastq_dir}/*_BCR_S*_L001_R1_001.fastq.gz")
-        .map { f ->
-            // Extract sample name: Control1_BCR_S9_L001_R1_001.fastq.gz → Control1
-            def matcher = (f.name =~ /^(.+?)_BCR_S\d+_L\d+_R\d+_\d+\.fastq\.gz$/)
-            if (matcher) {
-                def sample_id = matcher[0][1]
-                return tuple(sample_id, f.parent)
+        .fromList(dirs)
+        .flatMap { dir ->
+            file("${dir}/*_BCR_S*_L001_R1_001.fastq.gz").collect { f ->
+                def matcher = (f.name =~ /^(.+?)_BCR_S\d+_L\d+_R\d+_\d+\.fastq\.gz$/)
+                if (matcher) {
+                    def sample_id = matcher[0][1]
+                    return tuple(sample_id, f.parent)
+                }
+                return null
             }
-            return null
         }
         .filter { it != null }
-        .unique { it[0] }  // unique by sample_id
-}
-
-// Main Workflow
-workflow {
-
-    log.info """
-    ╔══════════════════════════════════════════╗
-    ║  Cell Ranger Dual Pipeline (GEX + BCR)   ║
-    ╠══════════════════════════════════════════╣
-    ║  fastq_dir    : ${params.fastq_dir}
-    ║  transcriptome: ${params.transcriptome}
-    ║  vdj_reference: ${params.vdj_reference}
-    ║  chemistry    : ${params.chemistry}
-    ║  outdir       : ${params.outdir}
-    ╚══════════════════════════════════════════╝
-    """.stripIndent()
-
-    // Check inputs
-    if (!params.fastq_dir) {
-        error "Please provide --fastq_dir /path/to/fastqs"
-    }
-    if (!params.transcriptome) {
-        error "Please provide --transcriptome /path/to/cellranger_ref"
-    }
-    if (!params.vdj_reference) {
-        error "Please provide --vdj_reference /path/to/vdj_ref"
-    }
-
-    // Build channels
-    gex_ch = build_gex_channel()
-    bcr_ch = build_bcr_channel()
-
-    // FastQC on all FASTQ files
-    fastq_ch = Channel
-        .fromPath("${params.fastq_dir}/*_R{1,2}_*.fastq.gz")
-        .map { f ->
-            def sample_base = f.name.replaceAll(/_S\d+.*/, '')
-            tuple(sample_base, f)
-        }
-        .groupTuple()
-
-    FASTQC(fastq_ch)
-    MULTIQC(FASTQC.out.reports.collect())
-
-    // Run pipelines
-    transcriptome_ch = Channel.value(file(params.transcriptome, checkIfExists: true))
-    vdj_ref_ch       = Channel.value(file(params.vdj_reference, checkIfExists: true))
-
-    CELLRANGER_COUNT(gex_ch, transcriptome_ch)
-    CELLRANGER_VDJ(bcr_ch, vdj_ref_ch)
-
-    // Print completion
-    CELLRANGER_COUNT.out.web_summary.view { sample_id, html ->
-        "GEX ${sample_id} complete"
-    }
-    CELLRANGER_VDJ.out.web_summary.view { sample_id, html ->
-        "BCR ${sample_id} complete"
-    }
+        .unique { it[0] }
 }
 
 // Process resources
@@ -249,7 +198,6 @@ process {
 
 // Execution profiles
 profiles {
-    
     slurm {
         process.executor = 'slurm'
         process.queue    = 'normal'
@@ -263,5 +211,61 @@ profiles {
         singularity.enabled    = true
         singularity.autoMounts = true
         singularity.cacheDir   = params.container_cache
+    }
+}
+
+// Main Workflow
+workflow {
+    log.info """
+    fastq_dirs   : ${params.fastq_dirs}
+    transcriptome: ${params.transcriptome}
+    vdj_reference: ${params.vdj_reference}
+    chemistry    : ${params.chemistry}
+    outdir       : ${params.outdir}
+    """.stripIndent()
+
+    // Check inputs
+    if (!params.fastq_dirs) {
+        error "Please provide --fastq_dirs 'dir1,dir2'"
+    }
+    if (!params.transcriptome) {
+        error "Please provide --transcriptome /path/to/cellranger_ref"
+    }
+    if (!params.vdj_reference) {
+        error "Please provide --vdj_reference /path/to/vdj_ref"
+    }
+
+    // Build channels
+    gex_ch = build_gex_channel()
+    bcr_ch = build_bcr_channel()
+
+    // FastQC
+    def dirs = get_fastq_dirs()
+    fastq_ch = Channel
+        .fromList(dirs)
+        .flatMap { dir ->
+            file("${dir}/*_R{1,2}_*.fastq.gz").collect { f ->
+                def sample_base = f.name.replaceAll(/_S\d+.*/, '')
+                tuple(sample_base, f)
+            }
+        }
+        .groupTuple()
+
+    FASTQC(fastq_ch)
+    MULTIQC(FASTQC.out.reports.collect())
+
+    // Cell Ranger
+    transcriptome_ch = Channel.value(file(params.transcriptome, checkIfExists: true))
+    vdj_ref_ch       = Channel.value(file(params.vdj_reference, checkIfExists: true))
+
+    CELLRANGER_COUNT(gex_ch, transcriptome_ch)
+    CELLRANGER_VDJ(bcr_ch, vdj_ref_ch)
+
+    // Print completion
+    CELLRANGER_COUNT.out.web_summary.view { sample_id, html ->
+        "GEX ${sample_id} complete"
+    }
+    CELLRANGER_VDJ.out.web_summary.view { sample_id, html ->
+        "BCR ${sample_id} complete"
     }
 }
