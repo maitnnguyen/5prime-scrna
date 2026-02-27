@@ -173,6 +173,41 @@ def build_bcr_channel() {
         .unique { it[0] }  // unique by sample_id
 }
 
+// Process resources
+process {
+    withLabel: 'process_low' {
+        cpus   = 2
+        memory = '8.GB'
+        time   = '2.h'
+    }
+    withLabel: 'process_high' {
+        cpus   = 32
+        memory = '128.GB'
+        time   = '48.h'
+    }
+    errorStrategy = { task.exitStatus in [130, 137, 140] ? 'retry' : 'finish' }
+    maxRetries    = 2
+}
+
+// Profiles
+profiles {
+    
+    slurm {
+        process.executor = 'slurm'
+        process.queue    = 'normal'
+        singularity.enabled    = true
+        singularity.autoMounts = true
+        singularity.cacheDir   = params.container_cache
+    }
+    
+    standard {
+        process.executor = 'local'
+        singularity.enabled    = true
+        singularity.autoMounts = true
+        singularity.cacheDir   = params.container_cache
+    }
+}
+
 // Main Workflow
 workflow {
 
@@ -228,40 +263,5 @@ workflow {
     }
     CELLRANGER_VDJ.out.web_summary.view { sample_id, html ->
         "BCR ${sample_id} complete"
-    }
-}
-
-// Process resources
-process {
-    withLabel: 'process_low' {
-        cpus   = 2
-        memory = '8.GB'
-        time   = '2.h'
-    }
-    withLabel: 'process_high' {
-        cpus   = 32
-        memory = '128.GB'
-        time   = '48.h'
-    }
-    errorStrategy = { task.exitStatus in [130, 137, 140] ? 'retry' : 'finish' }
-    maxRetries    = 2
-}
-
-// Profiles
-profiles {
-    
-    slurm {
-        process.executor = 'slurm'
-        process.queue    = 'normal'
-        singularity.enabled    = true
-        singularity.autoMounts = true
-        singularity.cacheDir   = params.container_cache
-    }
-    
-    standard {
-        process.executor = 'local'
-        singularity.enabled    = true
-        singularity.autoMounts = true
-        singularity.cacheDir   = params.container_cache
     }
 }
