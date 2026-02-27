@@ -9,20 +9,20 @@ nextflow.enable.dsl = 2
  * ============================================================
  */
 
-// ── Parameters ───────────────────────────────────────────────
+// Parameters
 params.fastq_dir      = null                // Root dir containing all FASTQs
 params.transcriptome  = /home/arkku/group/ics/tools/refdata-gex-GRCh38-2024-A  // For cellranger count (GEX)
 params.vdj_reference  = /home/arkku/group/ics/tools/cellranger/refdata-cellranger-vdj-GRCh38-alts-ensembl-7.1.0  // For cellranger vdj (BCR)
 params.chemistry      = "auto"
 params.outdir         = "${projectDir}/results"
 
-// ── Container paths (update with your actual filenames) ──────
+// Container paths (update with your actual filenames)
 params.container_cache = '/home/arkku/group/ics/tools/singularity_cache'
 params.fastqc_container     = "${params.container_cache}/fastqc.sif"        // UPDATE THIS
 params.multiqc_container    = "${params.container_cache}/multiqc.sif"       // UPDATE THIS
 params.cellranger_container = "${params.container_cache}/cellranger.sif"
 
-// ── FastQC ───────────────────────────────────────────────────
+// FastQC
 process FASTQC {
     tag "${sample_id}"
     label 'process_low'
@@ -47,7 +47,7 @@ process FASTQC {
     """
 }
 
-// ── MultiQC ──────────────────────────────────────────────────
+// MultiQC
 process MULTIQC {
     label 'process_low'
     publishDir "${params.outdir}/multiqc", mode: 'copy'
@@ -67,7 +67,7 @@ process MULTIQC {
     """
 }
 
-// ── Cell Ranger count (Gene Expression) ──────────────────────
+// Cell Ranger count (Gene Expression)
 process CELLRANGER_COUNT {
     tag "${sample_id}"
     label 'process_high'
@@ -102,7 +102,7 @@ process CELLRANGER_COUNT {
     """
 }
 
-// ── Cell Ranger vdj (BCR) ────────────────────────────────────
+// Cell Ranger vdj (BCR)
 process CELLRANGER_VDJ {
     tag "${sample_id}"
     label 'process_high'
@@ -136,7 +136,7 @@ process CELLRANGER_VDJ {
     """
 }
 
-// ── Helper: Build sample channels ────────────────────────────
+// Helper: Build sample channels
 def build_gex_channel() {
     // Get all samples WITHOUT 'BCR' in the name
     return Channel
@@ -173,7 +173,7 @@ def build_bcr_channel() {
         .unique { it[0] }  // unique by sample_id
 }
 
-// ── Main Workflow ────────────────────────────────────────────
+// Main Workflow
 workflow {
 
     log.info """
@@ -231,7 +231,7 @@ workflow {
     }
 }
 
-// ── Process resources ────────────────────────────────────────
+// Process resources
 process {
     withLabel: 'process_low' {
         cpus   = 2
@@ -245,4 +245,18 @@ process {
     }
     errorStrategy = { task.exitStatus in [130, 137, 140] ? 'retry' : 'finish' }
     maxRetries    = 2
+}
+
+// Profiles
+profiles {
+    slurm {
+        process.executor = 'slurm'
+        process.queue    = 'normal'
+        singularity.enabled = true
+    }
+    
+    standard {
+        process.executor = 'local'
+        singularity.enabled = true
+    }
 }
