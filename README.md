@@ -1,108 +1,134 @@
-# ============================================================
-#  ReapTEC-B Pipeline | README
-#  B Cell Bidirectional Enhancer Analysis from 5' scRNA-seq
-# ============================================================
+# 5prime-scrna Pipeline
+
+**Multi-modal analysis of 5' single-cell RNA-seq data from B cells**
+
+A Nextflow pipeline for integrated analysis of 10x Chromium 5' scRNA-seq data, combining gene expression, B cell receptor repertoire, transcription start site, and enhancer analyses. Designed for CVID vs healthy control B cell research.
+
+**Reference:** Oguchi A. et al., *Science* 385(6704), 2024. doi:10.1126/science.add8394
+
+---
 
 ## Overview
 
-This Nextflow pipeline implements the **ReapTEC** approach
-(Oguchi et al., *Science* 2024) for identifying bidirectionally
-transcribed candidate enhancers (btcEnhs) from 5' scRNA-seq data,
-adapted specifically for **B cell / CVID research**.
-
-**Reference:** Oguchi A. et al., Science 385(6704), 2024.
-doi:10.1126/science.add8394
-
-**Original ReapTEC:** github.com/MurakawaLab/ReapTEC
-**nf-core ReapTEC:** github.com/paganilab/nf-core-reaptec
-
----
-
-## Pipeline Overview
+This pipeline takes raw FASTQ files from 10x Chromium 5' scRNA-seq experiments (GEX + BCR libraries) and runs the following analyses in parallel:
 
 ```
-FASTQ (5' scRNA-seq)
-    │
-    ▼
-[QC] FastQC → Trim Galore → MultiQC
-    │
-    ▼
-[ALIGN] STARsolo (5' strand-aware, soloStrand=Forward)
-    │   clip5pNbases=39 | CB:16bp | UMI:12bp
-    ▼
-[DEDUP] UMI-tools deduplication
-    │
-    ▼
-[REAPTEC] SoftclipG Filter ──── KEY STEP
-    │   Extract reads with 5' cap G signature
-    │   Sense:    CIGAR starts with 39S + base G at pos 40
-    │   Antisense: CIGAR ends with 39S + base C at 3' end
-    ▼
-[CTSS] Per-cell TSS BED generation
-    │   chr  TSS_pos  cell_barcode  strand
-    ▼
-[BIGWIG] CPM-normalized BigWig (IGV/UCSC visualization)
-    │
-    ├──► [GEX] STARsolo Gene x Cell matrix → Seurat
-    │         B cell clustering + subtype annotation
-    │
-    ▼
-[ENHANCERS] Bidirectional Enhancer Calling
-    │   1. Pseudo-bulk CTSS aggregation
-    │   2. Peak clustering (merge within 10bp)
-    │   3. Sense + antisense peak separation
-    │   4. Bidirectional pairs (gap ≤ 500bp)
-    │   5. Promoter masking (FANTOM5 + gene TSS ±2kb)
-    │   6. CPM filter (log2CPM ≥ 2)
-    ▼
-[PSEUDOBULK] Per-cluster enhancer count matrix
-    │   DESeq2: CVID vs Control differential analysis
-    ▼
-[OUTPUT] 
-    ├── results/enhancers/   ← btcEnh BED files
-    ├── results/seurat/      ← Seurat RDS + UMAP
-    ├── results/pseudobulk/  ← Count matrix + DESeq2
-    ├── results/bigwig/      ← IGV tracks
-    └── results/multiqc/     ← QC report
+Samplesheet (sample, lane, condition, gex_r1, gex_r2, bcr_r1, bcr_r2)
+│
+├── FastQC (GEX + BCR) ──────────────────────────────────► MultiQC report
+│
+├── GEX library
+│   ├── Cell Ranger count ──► BAM ──┬── SCAFE ───────────► tCRE matrix (TSS)
+│   │                               ├── CamoTSS ──────────► alternative TSS
+│   │                               └── GEX matrix
+│   │                                       └── Seurat ───► clustering + UMAP
+│   └── ReapTEC (STARsolo) ──────────────────────────────► btcEnh → DESeq2
+│
+└── BCR library
+    ├── Cell Ranger VDJ ─────────────────────────────────► clonotypes
+    └── MiXCR ───────────────────────────────────────────► SHM + isotype
 ```
 
 ---
 
-## Quick Start
+## Modules
 
-### 1. Install Nextflow
+| Module | Tool | Input | Output |
+|---|---|---|---|
+| QC | FastQC + MultiQC | GEX + BCR FASTQ | HTML QC report |
+| Alignment + GEX | Cell Ranger count | GEX FASTQ | BAM + gene matrix |
+| TSS analysis | SCAFE | Cell Ranger BAM | tCRE matrix |
+| Alternative TSS | CamoTSS | Cell Ranger BAM (filtered xf:i:25) | TC + CTSS |
+| Enhancer calling | ReapTEC (STARsolo) | GEX FASTQ | btcEnh BED + DESeq2 |
+| BCR repertoire | Cell Ranger VDJ | BCR FASTQ | Clonotypes |
+| BCR repertoire | MiXCR | BCR FASTQ | SHM + isotype + clonal evolution |
+| Clustering | Seurat 5.4 | Cell Ranger gene matrix | UMAP + cell type annotation |
+
+---
+
+## Requirements
+
+- Nextflow ≥ 23.04
+- Singularity (for HPC) or Docker
+- Cell Ranger ≥ 7.0 (loaded via HPC module)
+- MiXCR ≥ 4.0 (loaded via HPC module)
+- ≥ 64GB RAM per sample
+- ≥ 500GB disk space for full cohort
+
+---
+
+## Installation
+
 ```bash
-curl -s https://get.nextflow.io | bash
-mv nextflow ~/bin/
+git clone https://github.com/maitnnguyen/5prime-scrna
+cd 5prime-scrna
 ```
 
-### 2. Prepare samplesheet (samplesheet.csv)
-```
-sample,fastq_R1,fastq_R2,condition
-CVID_patient1,/data/P1_R1.fastq.gz,/data/P1_R2.fastq.gz,CVID
-CVID_patient2,/data/P2_R1.fastq.gz,/data/P2_R2.fastq.gz,CVID
-HC_control1,/data/HC1_R1.fastq.gz,/data/HC1_R2.fastq.gz,Control
-HC_control2,/data/HC2_R1.fastq.gz,/data/HC2_R2.fastq.gz,Control
+Pre-pull Singularity images (run once on login node):
+
+```bash
+bash bin/pull_singularity_images.sh
 ```
 
-### 3. Run pipeline (Docker)
+---
+
+## Samplesheet
+
+Prepare a CSV file with one row per sample per lane:
+
+```csv
+sample,lane,condition,gex_r1,gex_r2,bcr_r1,bcr_r2
+Control1,L001,Control,/path/Control1_S1_L001_R1_001.fastq.gz,/path/Control1_S1_L001_R2_001.fastq.gz,/path/Control1_BCR_S9_L001_R1_001.fastq.gz,/path/Control1_BCR_S9_L001_R2_001.fastq.gz
+Control1,L002,Control,/path/Control1_S1_L002_R1_001.fastq.gz,/path/Control1_S1_L002_R2_001.fastq.gz,/path/Control1_BCR_S9_L002_R1_001.fastq.gz,/path/Control1_BCR_S9_L002_R2_001.fastq.gz
+Patient1,L001,CVID,/path/Patient1_S5_L001_R1_001.fastq.gz,/path/Patient1_S5_L001_R2_001.fastq.gz,/path/Patient1_BCR_S13_L001_R1_001.fastq.gz,/path/Patient1_BCR_S13_L001_R2_001.fastq.gz
+```
+
+| Column | Description |
+|---|---|
+| `sample` | Sample ID (e.g. Control1, Patient1) |
+| `lane` | Sequencing lane (L001 or L002) |
+| `condition` | CVID or Control |
+| `gex_r1` | Full path to GEX R1 FASTQ |
+| `gex_r2` | Full path to GEX R2 FASTQ |
+| `bcr_r1` | Full path to BCR R1 FASTQ |
+| `bcr_r2` | Full path to BCR R2 FASTQ |
+
+Generate samplesheet automatically:
+
+```bash
+python3 bin/generate_samplesheet.py
+```
+
+---
+
+## Usage
+
+### Run on SLURM cluster (Singularity)
+
 ```bash
 nextflow run main.nf \
     --input samplesheet.csv \
-    --genome hg38 \
     --outdir results/ \
-    -profile docker
-```
-
-### 4. Run on SLURM cluster (Singularity)
-```bash
-nextflow run main.nf \
-    --input samplesheet.csv \
     --genome hg38 \
-    --outdir results/ \
-    --max_cpus 32 \
-    --max_memory 256.GB \
+    --cellranger_ref /path/to/refdata-gex-GRCh38-2020-A \
+    --cellranger_vdj_ref /path/to/refdata-cellranger-vdj-GRCh38 \
+    --scafe_genome hg38.gencode_v49 \
+    --scafe_genome_dir /path/to/SCAFE_genome \
+    --scafe_glm_model /path/to/hg38.gencode_v32/glm_model/SCAFE.glm.model.rds \
+    --sif_dir /home/arkku/group/ics/tools/singularity \
     -profile singularity,slurm \
+    -resume
+```
+
+### Run with Docker (local)
+
+```bash
+nextflow run main.nf \
+    --input samplesheet.csv \
+    --outdir results/ \
+    --genome hg38 \
+    --cellranger_ref /path/to/refdata-gex-GRCh38-2020-A \
+    -profile docker \
     -resume
 ```
 
@@ -111,24 +137,36 @@ nextflow run main.nf \
 ## Key Parameters
 
 | Parameter | Default | Description |
-|-----------|---------|-------------|
-| `--clip5p` | 39 | Bases to clip from R1 5' (Next GEM). **Change to 41 for GEM-X** |
-| `--umi_len` | 12 | UMI length (Next GEM / GEM-X) |
-| `--bidir_gap` | 500 | Max gap (bp) between sense/antisense TSS pairs |
-| `--min_cpm` | 2 | log2CPM cutoff for robust TSS peaks |
-| `--resolution` | 0.5 | Seurat clustering resolution |
-| `--min_mapq` | 255 | Min MAPQ (255 = STAR uniquely mapped) |
+|---|---|---|
+| `--input` | required | Path to samplesheet CSV |
+| `--outdir` | `results/` | Output directory |
+| `--genome` | `hg38` | Reference genome |
+| `--cellranger_ref` | required | Cell Ranger GEX reference folder |
+| `--cellranger_vdj_ref` | required | Cell Ranger VDJ reference folder |
+| `--scafe_genome` | `hg38.gencode_v49` | SCAFE genome name |
+| `--scafe_genome_dir` | required | Path to SCAFE genome folder |
+| `--scafe_glm_model` | required | Path to pre-trained GLM model (.rds) |
+| `--sif_dir` | required | Path to folder containing pre-pulled .sif files |
+| `--clip5p` | `39` | Bases to clip from R1 5' (Next GEM). **Change to 41 for GEM-X** |
+| `--umi_len` | `12` | UMI length |
+| `--bidir_gap` | `500` | Max gap (bp) between sense/antisense TSS pairs for ReapTEC |
+| `--min_cpm` | `2` | log2CPM cutoff for TSS peak filtering |
+| `--resolution` | `0.5` | Seurat clustering resolution |
+| `--skip_scafe` | `false` | Skip SCAFE branch |
+| `--skip_camotss` | `false` | Skip CamoTSS branch |
+| `--skip_reaptec` | `false` | Skip ReapTEC branch |
+| `--skip_vdj` | `false` | Skip Cell Ranger VDJ branch |
+| `--skip_mixcr` | `false` | Skip MiXCR branch |
 
 ---
 
-## GEM-X Chemistry Adjustment
+## GEM-X Chemistry
 
-If using **10x GEM-X** chemistry (newer kit), change:
+If using **10x GEM-X** chemistry (newer kit), adjust:
+
 ```bash
---clip5p 41 \
---umi_len 12
+--clip5p 41 --umi_len 12
 ```
-And the softclipG script automatically adjusts position indices.
 
 ---
 
@@ -136,37 +174,82 @@ And the softclipG script automatically adjusts position indices.
 
 ```
 results/
-├── pipeline_info/
-│   ├── execution_report.html
-│   ├── execution_timeline.html
-│   └── pipeline_dag.svg
-├── fastqc/          ← Raw read QC
-├── trimgalore/      ← Trimming reports
-├── star/            ← Aligned BAMs + STARsolo output
-├── softclip_g/      ← Cap-signature filtered BAMs
-├── ctss/            ← Per-cell CTSS BED files
-├── bigwig/          ← Normalized tracks (sense + antisense)
-├── enhancers/       ← btcEnh BED files per sample
-│   ├── *.sense_peaks.bed
-│   ├── *.antisense_peaks.bed
-│   ├── *.bidir_pairs.bed
-│   └── *.enhancers.bed      ← FINAL enhancers
-├── seurat/          ← Seurat objects + UMAP plots
-├── pseudobulk/      ← Count matrices + DESeq2 results
-└── multiqc/         ← Aggregated QC report
+├── multiqc/                  ← Aggregated QC report (FastQC + Cell Ranger)
+├── cellranger/
+│   ├── {sample}/outs/        ← Cell Ranger count outputs
+│   │   ├── possorted_genome_bam.bam
+│   │   ├── filtered_feature_bc_matrix/
+│   │   └── web_summary.html
+│   └── vdj/{sample}/outs/    ← Cell Ranger VDJ outputs
+├── mixcr/
+│   └── {sample}/             ← MiXCR clonotypes + SHM + isotype
+├── scafe/
+│   └── {sample}/             ← tCRE BED + UMI count matrix
+├── camotss/
+│   └── {sample}/             ← TC + CTSS outputs
+├── reaptec/
+│   ├── {sample}/enhancers/   ← btcEnh BED files
+│   └── pseudobulk/           ← DESeq2 CVID vs Control results
+└── seurat/
+    ├── {sample}_seurat.rds   ← Seurat objects
+    └── {sample}_umap.pdf     ← UMAP plots
 ```
 
 ---
 
-## Downstream Analysis (Post-pipeline)
+## Singularity Images
+
+All containers are pre-pulled to avoid runtime downloads on compute nodes.
+Images are stored in `--sif_dir` (default: `/home/arkku/group/ics/tools/singularity/`):
+
+| File | Tool | Version |
+|---|---|---|
+| `scafe.sif` | SCAFE | latest |
+| `star.sif` | STAR / STARsolo | 2.7.11b |
+| `fastqc.sif` | FastQC | 0.12.1 |
+| `trimgalore.sif` | Trim Galore | 0.6.10 |
+| `samtools.sif` | SAMtools | 1.19 |
+| `multiqc.sif` | MultiQC | 1.21 |
+| `bedtools.sif` | BEDTools | 2.31.1 |
+| `deeptools.sif` | deepTools | 3.5.4 |
+| `umi_tools.sif` | UMI-tools | 1.1.5 |
+
+**Seurat** (v5.4) is run via conda environment (`vscenv`) — no SIF required.
+**Cell Ranger** and **MiXCR** are loaded via HPC modules.
+
+Pull all images:
+```bash
+bash bin/pull_singularity_images.sh
+```
+
+---
+
+## HPC Notes (arkku cluster)
+
+```bash
+# Request compute node
+srun -p arkku --cpus-per-task=8 --mem=32G --time=08:00:00 --pty bash
+
+# Activate conda environment
+conda activate vscenv
+
+# Run pipeline
+nextflow run main.nf -profile singularity,slurm -resume
+```
+
+SCAFE requires custom genome binding — handled automatically via `--scafe_genome_dir`.
+
+---
+
+## Downstream Analysis
 
 After running this pipeline, recommended next steps:
 
 1. **TF Motif Enrichment** — chromVAR + JASPAR2024 on btcEnh BED
 2. **GRN Reconstruction** — SCENIC+ using btcEnh + GEX
-3. **BCR Integration** — Link btcEnh activity to isotype (Cell Ranger VDJ)
-4. **CVID Candidate Enhancers** — Overlap DESeq2 results with GWAS loci
-5. **Super-Enhancers** — ROSE on differentially active enhancers
+3. **BCR-TSS Integration** — link SCAFE tCRE activity to BCR isotype/SHM (via MiXCR)
+4. **CVID Candidate Enhancers** — overlap DESeq2 results with GWAS loci
+5. **Alternative TSS usage** — BRIE2 on CamoTSS output for differential TSS analysis
 
 ---
 
@@ -174,9 +257,13 @@ After running this pipeline, recommended next steps:
 
 If you use this pipeline, please cite:
 
-> Oguchi A. et al. (2024). "Single-cell analysis of human CD4+ T cells
-> identifies enhancers associated with autoimmune diseases."
-> *Science* 385(6704). https://doi.org/10.1126/science.add8394
+- Oguchi A. et al. (2024). *Science* 385(6704). https://doi.org/10.1126/science.add8394
+- Moody J. et al. (2022). SCAFE. *Bioinformatics*. https://doi.org/10.1093/bioinformatics/btac450
+- Hou R. et al. (2023). CamoTSS. *Nat Commun* 14, 7240. https://doi.org/10.1038/s41467-023-42636-1
+- Hao Y. et al. (2024). Seurat v5. *Nature Methods*. https://doi.org/10.1038/s41592-024-02353-z
 
-> Andersson R. et al. (2014). "An atlas of active enhancers across human
-> cell types and tissues." *Nature* 507, 455–461.
+---
+
+## License
+
+Apache-2.0 — see [LICENSE](LICENSE)
