@@ -48,8 +48,8 @@ Samplesheet (sample, lane, condition, gex_r1, gex_r2, bcr_r1, bcr_r2)
 
 - Nextflow ≥ 23.04
 - Singularity (for HPC) or Docker
-- Cell Ranger ≥ 7.0 (loaded via HPC module)
-- MiXCR ≥ 4.0 (loaded via HPC module)
+    - Cell Ranger (ref link: )
+    - MiXCR (ref link: )
 - ≥ 64GB RAM per sample
 - ≥ 500GB disk space for full cohort
 
@@ -200,16 +200,16 @@ results/
 All containers are pre-pulled to avoid runtime downloads on compute nodes.
 Images are stored in `--sif_dir` (default: `/home/arkku/group/ics/tools/singularity/`):
 
-| File | Tool | Version |
+| File | Tool | Version | Link |
 |---|---|---|
-| `scafe.sif` | SCAFE | latest |
-| `fastqc.sif` | FastQC | 0.12.1 |
-| `multiqc.sif` | MultiQC | 1.21 |
-| `bedtools.sif` | BEDTools | 2.31.1 |
-| `deeptools.sif` | deepTools | 3.5.4 |
-| `umi_tools.sif` | UMI-tools | 1.1.5 |
-| `mixcr_latest.sif` | UMI-tools | 1.1.5 |
-| `cellranger.sif` | UMI-tools | 1.1.5 |
+| `scafe.sif` | SCAFE | latest | https://github.com/chung-lab/SCAFE |
+| `fastqc.sif` | FastQC | 0.12.1 |  |
+| `multiqc.sif` | MultiQC | 1.21 |. |
+| `bedtools.sif` | BEDTools | 2.31.1 |  |
+| `deeptools.sif` | deepTools | 3.5.4 |  |
+| `umi_tools.sif` | UMI-tools | 1.1.5 |  |
+| `mixcr_latest.sif` | MiXCR | 4.0.0 | https://mixcr.com/mixcr/getting-started/docker/ |
+| `cellranger.sif` | Cell Ranger | 8.0.1 | https://hub.docker.com/r/litd/docker-cellranger |
 
 **Seurat** (v5.4) is run via conda environment (`vscenv`) — no SIF required.
 **samtools** and **STAR** are loaded via HPC modules.
