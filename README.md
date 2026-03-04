@@ -200,13 +200,11 @@ results/
 All containers are pre-pulled to avoid runtime downloads on compute nodes.
 Images are stored in `--sif_dir` (default: `/home/arkku/group/ics/tools/singularity/`):
 
-| File | Tool | Version | Link |
+| File | Tool | Version |
 |---|---|---|
 | `scafe.sif` | [SCAFE](https://github.com/chung-lab/SCAFE) | latest |
 | `fastqc.sif` | FastQC | 0.12.1 |
 | `multiqc.sif` | MultiQC | 1.21 |
-| `bedtools.sif` | BEDTools | 2.31.1 |
-| `deeptools.sif` | deepTools | 3.5.4 |
 | `umi_tools.sif` | UMI-tools | 1.1.5 |
 | `mixcr_latest.sif` | [MiXCR](https://mixcr.com/mixcr/getting-started/docker/) | 4.0.0 |
 | `cellranger.sif` | [Cell Ranger](https://hub.docker.com/r/litd/docker-cellranger) | 8.0.1 |
