@@ -4,8 +4,6 @@
 
 A Nextflow pipeline for integrated analysis of 10x Chromium 5' scRNA-seq data, combining gene expression, B cell receptor repertoire, transcription start site, and enhancer analyses. Designed for CVID vs healthy control B cell research.
 
-**Reference:** Oguchi A. et al., *Science* 385(6704), 2024. doi:10.1126/science.add8394
-
 ---
 
 ## Overview
@@ -205,17 +203,16 @@ Images are stored in `--sif_dir` (default: `/home/arkku/group/ics/tools/singular
 | File | Tool | Version |
 |---|---|---|
 | `scafe.sif` | SCAFE | latest |
-| `star.sif` | STAR / STARsolo | 2.7.11b |
 | `fastqc.sif` | FastQC | 0.12.1 |
-| `trimgalore.sif` | Trim Galore | 0.6.10 |
-| `samtools.sif` | SAMtools | 1.19 |
 | `multiqc.sif` | MultiQC | 1.21 |
 | `bedtools.sif` | BEDTools | 2.31.1 |
 | `deeptools.sif` | deepTools | 3.5.4 |
 | `umi_tools.sif` | UMI-tools | 1.1.5 |
+| `mixcr_latest.sif` | UMI-tools | 1.1.5 |
+| `cellranger.sif` | UMI-tools | 1.1.5 |
 
 **Seurat** (v5.4) is run via conda environment (`vscenv`) — no SIF required.
-**Cell Ranger** and **MiXCR** are loaded via HPC modules.
+**samtools** and **STAR** are loaded via HPC modules.
 
 Pull all images:
 ```bash
@@ -267,3 +264,4 @@ If you use this pipeline, please cite:
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE)
+To run MiXCR, we obtained license for academic use from MiXCR (https://mixcr.com/mixcr/getting-started/milm/)
