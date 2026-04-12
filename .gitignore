@@ -28,7 +28,9 @@ results/
 */cellranger_multi.nf
 */mixcr.nf
 */trimgalore.nf
-
+*/seurat_clustering.nf
+*/star_index.nf
+*/scafe.nf
 */cellranger_multi_with_mixcr.nf
 */cellranger_final.nf
 */enhancer_analysis.nf
@@ -36,5 +38,6 @@ results/
 */qc.nf
 
 # scafe and immcantation are temporary out for now, will update later
-*/scafe.nf
+*/scafe_workflow.nf
 */immcantation_workflow.nf
+complete_bcell_pipeline.nf
