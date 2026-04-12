@@ -81,10 +81,7 @@ workflow {
             if (!row.sample)    error "Samplesheet missing 'sample' column"
             if (!row.fastq_dir) error "Samplesheet missing 'fastq_dir' column for sample ${row.sample}"
 
-            def meta = [
-                id   : row.sample,
-                lane : row.lane ?: 'L001'
-            ]
+            def meta           = [ id: row.sample ]   // ← remove lane
             def fastq_dir      = file(row.fastq_dir, checkIfExists: true)
             def cellranger_dir = row.cellranger_dir?.trim() ?: ''
 
