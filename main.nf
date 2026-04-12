@@ -13,7 +13,7 @@ nextflow.enable.dsl = 2
 //    nextflow run main.nf -profile singularity      # use containers
 // ============================================================
 
-include { CELLRANGER_WORKFLOW } from './subworkflows/cellranger_multi'
+include { CELLRANGER_WORKFLOW } from './subworkflows/cellranger'
 include { REAPTEC_CORE        } from './subworkflows/reaptec_core'
 include { EXTRACT_WHITELIST   } from './modules/extract_whitelist'
 include { FASTQC              } from './modules/fastqc'
