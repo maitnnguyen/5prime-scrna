@@ -1,16 +1,25 @@
 process EXTRACT_WHITELIST {
-    tag "${sample_id}"
+
+    tag "$meta.id"
     label 'process_low'
 
+    publishDir "${params.outdir}/${params.genome}/cellranger/${meta.id}", mode: 'copy'
+
     input:
-    tuple val(sample_id), path(matrix_dir) // from CELLRANGER_COUNT.out.filtered_matrix
+    tuple val(meta), path(matrix_dir)
 
     output:
-    tuple val(sample_id), path("${sample_id}_whitelist.txt"), emit: whitelist
+    tuple val(meta), path("${meta.id}_whitelist.txt"), emit: whitelist
 
     script:
     """
-    # Cell Ranger stores barcodes in filtered_feature_bc_matrix/barcodes.tsv.gz
-    zcat ${matrix_dir}/barcodes.tsv.gz | sed 's/-1//' > ${sample_id}_whitelist.txt
+    zcat ${matrix_dir}/barcodes.tsv.gz | sed 's/-1\$//' > ${meta.id}_whitelist.txt
+
+    NBARCODES=\$(wc -l < ${meta.id}_whitelist.txt)
+    if [ "\$NBARCODES" -eq 0 ]; then
+        echo "ERROR: Whitelist for ${meta.id} is empty." >&2
+        exit 1
+    fi
+    echo "[EXTRACT_WHITELIST] ${meta.id}: \$NBARCODES barcodes written."
     """
 }
