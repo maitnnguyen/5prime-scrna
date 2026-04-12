@@ -15,10 +15,8 @@ process SOFTCLIP_G_FILTER {
     tuple val(meta), path(bai)
 
     output:
-    tuple val(meta), path("${meta.id}.sense.bam"),     emit: bam_sense
-    tuple val(meta), path("${meta.id}.sense.bam.bai"), emit: bai_sense
-    tuple val(meta), path("${meta.id}.antisense.bam"),     emit: bam_antisense
-    tuple val(meta), path("${meta.id}.antisense.bam.bai"), emit: bai_antisense
+    tuple val(meta), path("SoftclipG_${meta.id}.bam"), emit: bam
+    path "SoftclipG_${meta.id}.bam.bai"              , emit: bai
     tuple val(meta), path("${meta.id}.softclipG.log"),     emit: log
 
     script:
@@ -48,60 +46,44 @@ process SOFTCLIP_G_FILTER {
     //   GEM-X:    position 42 of R1 (change BASE and CIGAR pattern)
     // ────────────────────────────────────────────────────────
 
-    def cap_pos    = params.clip5p + 1           // e.g. 40 for Next GEM
-    def cigar_pos  = params.clip5p               // e.g. 39 for softclip CIGAR
-    def cigar_alt  = params.clip5p               // antisense end
+    // clip_val is the base position (e.g., 40)
+    // cigar_val is the string match (e.g., 40S)
+    def clip_val  = params.clip5p + 1 
+    def cigar_val = params.clip5p + 1 
 
     """
-    #!/bin/bash
-    set -euo pipefail
+    # Initialize log
+    echo "[ReapTEC SoftclipG] Sample: ${meta.id}" > ${meta.id}.softclipG.log
+    echo "[ReapTEC SoftclipG] Target Position: ${clip_val}" >> ${meta.id}.softclipG.log
 
-    echo "[ReapTEC SoftclipG] Processing: ${meta.id}" > ${meta.id}.softclipG.log
-    echo "[ReapTEC SoftclipG] Cap position in read: ${cap_pos}" >> ${meta.id}.softclipG.log
-    echo "[ReapTEC SoftclipG] Expected CIGAR pattern: ${cigar_pos}S[0-9]+M..." >> ${meta.id}.softclipG.log
+    # 1. Extract Unique Read 1s 
+    # -f 64: Read 1 only
+    # -q 255: Unique mappers only
+    samtools view -@ ${task.cpus} -h -f 64 -q 255 ${bam} > unique_r1.sam
 
-    # ── Extract SENSE reads (forward strand, cap G at 5' start) ──
-    # Filter: read is on forward strand (-F 16) AND
-    #         the base at position cap_pos is 'G' AND
-    #         the CIGAR starts with the expected softclip pattern
-    echo "[ReapTEC] Extracting sense reads with 5' cap G..." >> ${meta.id}.softclipG.log
+    # 2. Filter for Softclip G (Forward) and C (Reverse)
+    # We use a subshell ( ... ) to stream both filters into one sort command
+    (
+        samtools view -H unique_r1.sam; # Keep the BAM header
+        
+        # Sense/Forward: starts with softclip, base at position is G
+        samtools view -F 16 unique_r1.sam | awk -F '\\t' 'BEGIN {OFS="\\t"} {
+            BASE = substr(\$10, ${clip_val}, 1);
+            if (\$6 ~ /^${cigar_val}S/ && (BASE == "G" || BASE == "g")) {print \$0}
+        }';
+        
+        # Antisense/Reverse: ends with softclip, base at calculated position is C
+        samtools view -f 16 unique_r1.sam | awk -F '\\t' 'BEGIN {OFS="\\t"} {
+            ALT = substr(\$10, length(\$10)-(${clip_val}-1), 1);
+            if (\$6 ~ /${cigar_val}S\$/ && (ALT == "C" || ALT == "c")) {print \$0}
+        }'
+    ) | samtools sort -@ ${task.cpus} -o SoftclipG_${meta.id}.bam
 
-    samtools view -@ ${task.cpus} -F 16 ${bam} | \\
-        awk -v pos=${cap_pos} -v clip=${cigar_pos} '
-        {
-            BASE = substr(\$10, pos, 1);
-            if (\$6 ~ "^" clip "S[0-9]" && BASE == "G") { print \$0 }
-        }' | \\
-        cat <(samtools view -H ${bam}) - | \\
-        samtools sort -@ ${task.cpus} -o ${meta.id}.sense.bam
-
-    samtools index -@ ${task.cpus} ${meta.id}.sense.bam
-
-    SENSE_COUNT=\$(samtools view -c ${meta.id}.sense.bam)
-    echo "[ReapTEC] Sense reads with cap G: \$SENSE_COUNT" >> ${meta.id}.softclipG.log
-
-    # ── Extract ANTISENSE reads (reverse strand, cap C at 3' end) ──
-    # The complementary C at the 3' end of antisense reads
-    echo "[ReapTEC] Extracting antisense reads with 3' cap C..." >> ${meta.id}.softclipG.log
-
-    samtools view -@ ${task.cpus} -f 16 ${bam} | \\
-        awk -v clip=${cigar_alt} '
-        {
-            ALT = substr(\$10, length(\$10) - clip + 1, 1);
-            if (\$6 ~ "[0-9]M" clip "S\$" && ALT == "C") { print \$0 }
-        }' | \\
-        cat <(samtools view -H ${bam}) - | \\
-        samtools sort -@ ${task.cpus} -o ${meta.id}.antisense.bam
-
-    samtools index -@ ${task.cpus} ${meta.id}.antisense.bam
-
-    ANTI_COUNT=\$(samtools view -c ${meta.id}.antisense.bam)
-    echo "[ReapTEC] Antisense reads with cap C: \$ANTI_COUNT" >> ${meta.id}.softclipG.log
-
-    TOTAL=\$(samtools view -c ${bam})
-    echo "[ReapTEC] Total input reads: \$TOTAL" >> ${meta.id}.softclipG.log
-    echo "[ReapTEC] Cap signature retention rate: \$(echo "scale=2; (\$SENSE_COUNT + \$ANTI_COUNT) / \$TOTAL * 100" | bc)%" >> ${meta.id}.softclipG.log
-
-    echo "[ReapTEC SoftclipG] Done." >> ${meta.id}.softclipG.log
+    # 3. Index the final ReapTEC-ready BAM
+    samtools index SoftclipG_${meta.id}.bam
+    
+    # Cleanup
+    rm unique_r1.sam
+    echo "[ReapTEC SoftclipG] Filter complete." >> ${meta.id}.softclipG.log
     """
 }

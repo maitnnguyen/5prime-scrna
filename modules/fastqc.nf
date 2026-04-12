@@ -11,29 +11,26 @@
 // ============================================================
 
 process FASTQC {
-
-    tag "${meta.id} ${meta.library} ${meta.lane}"
+    tag "${sample_id}"
     label 'process_low'
+    publishDir "${params.outdir}/fastqc", mode: 'copy', pattern: "*.html"
 
-    // Only publish QC reports — not FASTQ files
-    publishDir "${params.outdir}/fastqc/${meta.id}", mode: 'copy',
-        saveAs: { filename -> filename.endsWith('.log') ? null : filename }
+    container params.fastqc_container
 
     input:
-    tuple val(meta), path(reads)   // meta has: id, library (GEX/BCR), lane
+    tuple val(sample_id), path(reads)
 
     output:
-    tuple val(meta), path("*.html"), emit: html
-    tuple val(meta), path("*.zip"),  emit: zip
+    tuple val(sample_id), path("*.html"), emit: html
+    tuple val(sample_id), path("*.zip"),  emit: zip
+    path  "*.zip",                        emit: reports
 
     script:
     """
     fastqc \\
         --threads ${task.cpus} \\
+        --quiet \\
         --outdir . \\
-        --noextract \\
-        --nogroup \\
-        ${reads} \\
-        2> ${meta.id}_${meta.library}_${meta.lane}.fastqc.log
+        ${reads}
     """
 }

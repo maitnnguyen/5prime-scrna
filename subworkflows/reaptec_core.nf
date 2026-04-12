@@ -1,88 +1,98 @@
 // ============================================================
 //  subworkflows/reaptec_core.nf
-//  Core ReapTEC steps: STAR → UMI dedup → SoftclipG → CTSS
-//  Based on: github.com/MurakawaLab/ReapTEC
+//
+//  Step order (matches official ReapTEC log, Murakawa lab 2023):
+//    STAR_ALIGN
+//      → SOFTCLIP_G_FILTER   (R1 unique mappers with cap-G/C signature)
+//        → UMITOOLS_DEDUP    (dedup within cap-G reads using CB/UB tags)
+//          → CTSS_BED        (1-bp TSS map with cell barcodes)
+//            ├→ CTSS_COUNTS_BIGWIG   (CPM BigWig + FANTOM QC)
+//            └→ BIDIR_ENHANCER_CALL  (bidirectional enhancer calling)
 // ============================================================
 
 include { STAR_ALIGN          } from '../modules/star_align'
-include { UMITOOLS_DEDUP      } from '../modules/umitools_dedup'
 include { SOFTCLIP_G_FILTER   } from '../modules/softclip_g'
-include { CELL_BARCODE_CTSS   } from '../modules/cell_barcode_ctss'
+include { UMITOOLS_DEDUP      } from '../modules/umitools_dedup'
+include { CTSS_BED            } from '../modules/ctss_bed'
 include { CTSS_COUNTS_BIGWIG  } from '../modules/ctss_counts_bigwig'
+include { BIDIR_ENHANCER_CALL } from '../modules/bidir_enhancer_call'
 
 workflow REAPTEC_CORE {
 
     take:
-    ch_reads      // [ meta, [R1, R2] ] trimmed reads
-    ch_star_index // STAR genome index
-    ch_gtf        // Gene annotation GTF
-    ch_whitelist  // 10x barcode whitelist
+    ch_star_input   // [ meta, [r1_files], [r2_files], whitelist ]
+                    // Built in main.nf — r1/r2 are lists to support multi-lane
+    ch_star_index   // STAR genome index (value channel)
+    ch_gtf          // Gene annotation GTF (value channel)
+    ch_chrom_sizes  // genome.chrom.sizes (value channel)
+    ch_fantom_promo // FANTOM5 promoter BED — [] for T2T (optional)
+    ch_fantom_enhan // FANTOM-NET enhancer BED — [] for T2T (optional)
+    ch_mask_bed     // Masking BED for enhancer calling (value channel)
 
     main:
 
-    // ── STEP 1: STARsolo alignment (5' chemistry, strand-aware) ──
-    // Key ReapTEC note: Read1 must be >26bp (e.g. 150bp paired-end)
-    // to capture the 5' cap signature. STARsolo parameters are
-    // specifically tuned for 5' chemistry and UMI/CB extraction.
+    // ── Unpack input channel ──────────────────────────────────
+    // ch_star_input carries [ meta, r1_files, r2_files, whitelist ]
+    // We need reads and whitelist as separate channels for STAR_ALIGN
+    ch_reads     = ch_star_input.map { meta, r1, r2, wl -> [ meta, r1, r2 ] }
+    ch_whitelist = ch_star_input.map { meta, r1, r2, wl -> [ meta, wl ]     }
+
+    // ── STEP 1: STARsolo alignment ────────────────────────────
     STAR_ALIGN(
-        ch_reads,
+        ch_reads,       // [ meta, [r1_files], [r2_files] ]
         ch_star_index,
         ch_gtf,
-        ch_whitelist
+        ch_whitelist    // [ meta, whitelist ] — joined by meta in STAR_ALIGN
     )
 
-    // ── STEP 2: UMI-tools deduplication ──────────────────────────
-    // Remove PCR duplicates while preserving the 5' TSS position.
-    // Critical: dedup must be done BEFORE extracting 5' positions
-    // to avoid counting the same molecule multiple times.
-    UMITOOLS_DEDUP(
+    // ── STEP 2: SoftclipG filter ──────────────────────────────
+    // Extracts R1-only uniquely mapped reads with cap-G/C signature.
+    // Must happen BEFORE dedup — only cap-signature reads are deduplicated.
+    SOFTCLIP_G_FILTER(
         STAR_ALIGN.out.bam,
         STAR_ALIGN.out.bai
     )
 
-    // ── STEP 3: SoftclipG filter (ReapTEC cap signature) ─────────
-    // This is the KEY ReapTEC innovation:
-    // Extracts reads starting with an unencoded G at the 5' end.
-    // The extra G is added by the reverse transcriptase at the
-    // 5' cap of the mRNA (template switching) — it marks the
-    // EXACT transcription start site (TSS).
-    // Sense reads: R1 starts with softclipped G
-    // Antisense reads: R1 ends with softclipped C (complementary)
-    // This separates genuine 5' cap reads from internal priming.
-    SOFTCLIP_G_FILTER(
-        UMITOOLS_DEDUP.out.bam,
-        UMITOOLS_DEDUP.out.bai
-    )
+    // ── STEP 3: UMI deduplication ─────────────────────────────
+    // Join bam + bai + whitelist by meta.id before calling.
+    // Guarantees correct whitelist is paired with correct sample BAM.
+    ch_dedup_input = SOFTCLIP_G_FILTER.out.bam
+        .join( SOFTCLIP_G_FILTER.out.bai, by: 0 )
+        .join( ch_whitelist,              by: 0 )
+        // → [ meta, bam, bai, whitelist ]
 
-    // ── STEP 4: Cell barcode CTSS BED generation ─────────────────
-    // Identifies 5'-end TSS positions (CTSS = CAGE-like TSS)
-    // from the softclipG-filtered, STARsolo-aligned,
-    // UMI-deduplicated 5' scRNA-seq data.
-    // Output: per-cell BED file with columns:
-    //   chr  start  end  cell_barcode  count  strand
-    CELL_BARCODE_CTSS(
-        SOFTCLIP_G_FILTER.out.bam_sense,
-        SOFTCLIP_G_FILTER.out.bam_antisense,
-        STAR_ALIGN.out.barcodes
-    )
+    UMITOOLS_DEDUP(ch_dedup_input)
 
-    // ── STEP 5: CTSS counts + BigWig normalization ────────────────
-    // Counts 5' ends at known promoters and FANTOM5 enhancers.
-    // Generates CPM-normalized BigWig files for IGV/UCSC
-    // visualization of the TSS landscape.
+    // ── STEP 4: CTSS BED generation ───────────────────────────
+    // Join bam + bai into single tuple so meta is never lost
+    ch_ctss_input = UMITOOLS_DEDUP.out.bam
+        .join( UMITOOLS_DEDUP.out.bai, by: 0 )
+        // → [ meta, bam, bai ]
+
+    CTSS_BED(ch_ctss_input)
+
+    // ── STEP 5: CPM BigWig + FANTOM quantification ────────────
+    // fantom_promo and fantom_enhan are [] for T2T —
+    // CTSS_COUNTS_BIGWIG skips quantification when they are empty
     CTSS_COUNTS_BIGWIG(
-        CELL_BARCODE_CTSS.out.ctss_bed,
-        STAR_ALIGN.out.barcodes
+        CTSS_BED.out.bed,
+        ch_chrom_sizes,
+        ch_fantom_promo,
+        ch_fantom_enhan
+    )
+
+    // ── STEP 6: Bidirectional enhancer calling ────────────────
+    BIDIR_ENHANCER_CALL(
+        CTSS_BED.out.bed,
+        ch_mask_bed
     )
 
     emit:
-    bam          = UMITOOLS_DEDUP.out.bam       // Deduplicated BAM
-    ctss_bed     = CELL_BARCODE_CTSS.out.ctss_bed  // Per-cell CTSS BED
-    bigwig_sense = CTSS_COUNTS_BIGWIG.out.bw_sense  // Sense strand BigWig
-    bigwig_anti  = CTSS_COUNTS_BIGWIG.out.bw_anti   // Antisense BigWig
-    gene_matrix  = STAR_ALIGN.out.gene_matrix    // STARsolo gene x cell matrix
-    barcodes     = STAR_ALIGN.out.barcodes        // Filtered barcodes
-    logs         = STAR_ALIGN.out.log
-                   .mix(UMITOOLS_DEDUP.out.log)
-                   .mix(SOFTCLIP_G_FILTER.out.log)
+    ctss_bed    = CTSS_BED.out.bed
+    bigwig_fwd  = CTSS_COUNTS_BIGWIG.out.bw_fwd
+    bigwig_rev  = CTSS_COUNTS_BIGWIG.out.bw_rev
+    enhancers   = BIDIR_ENHANCER_CALL.out.bed
+    tpm_matrix  = BIDIR_ENHANCER_CALL.out.tpm_matrix
+    prom_counts = CTSS_COUNTS_BIGWIG.out.prom_counts
+    gene_matrix = STAR_ALIGN.out.gene_matrix
 }

@@ -6,65 +6,72 @@
 // ============================================================
 
 process CTSS_COUNTS_BIGWIG {
-
     tag "$meta.id"
     label 'process_medium'
-    publishDir "${params.outdir}/bigwig/${meta.id}", mode: 'copy'
+    
+    // Organizes by genome (T2T/hg38)
+    publishDir "${params.outdir}/${params.genome}/reaptec/counts_and_bw", mode: 'copy'
 
     input:
-    tuple val(meta), path(ctss_bed)     // merged sense+antisense CTSS BED
-    tuple val(meta), path(barcodes)     // filtered barcodes for cell count
+    tuple val(meta), path(ctss_bed)  // From REAPTEC_CTSS_BED
+    path chrom_sizes                 // Sorted chrom.sizes file
+    path promoter_ref                // FANTOM5 promoter bed
+    path enhancer_ref                // FANTOM-NET enhancer bed
 
     output:
-    tuple val(meta), path("${meta.id}.sense.bw"),          emit: bw_sense
-    tuple val(meta), path("${meta.id}.antisense.bw"),      emit: bw_anti
-    tuple val(meta), path("${meta.id}.ctss_counts.tsv.gz"),emit: counts
-    tuple val(meta), path("${meta.id}.bigwig.log"),        emit: log
+    tuple val(meta), path("${meta.id}.CTSS.CPM.fwd.bw"), emit: bw_fwd
+    tuple val(meta), path("${meta.id}.CTSS.CPM.rev.bw"), emit: bw_rev
+    path("${meta.id}.promoter.fwd.rev.txt"), optional: true, emit: prom_counts
+    path("${meta.id}.enhancer.*.txt"),       optional: true, emit: enh_counts
 
     script:
     """
-    #!/bin/bash
-    set -euo pipefail
+    # 1. Calculate Total CTSS sum for CPM (Column 5 in your CTSS.bed)
+    SUM_TOTAL=\$(awk 'BEGIN{sum=0}{sum=sum+\$5}END{print sum}' ${ctss_bed})
 
-    echo "[BigWig] Generating normalised BigWig tracks for: ${meta.id}" > ${meta.id}.bigwig.log
+    # 2. Collapse CTSS to avoid overlapping regions (Murakawa Script Step)
+    awk 'BEGIN {OFS="\\t"} {print \$1, \$2, \$3, ".", \$5, \$6}' ${ctss_bed} | \\
+        bedtools groupby -g 1,2,3,4,6 -c 5 -o sum | \\
+        awk 'BEGIN{OFS="\\t"}{print \$1, \$2, \$3, \$4, \$6, \$5}' > collapsed.bed
 
-    # ── Total mapped CTSS for CPM normalisation ───────────────────
-    TOTAL=\$(zcat ${ctss_bed} | wc -l)
-    echo "[BigWig] Total CTSS records: \$TOTAL" >> ${meta.id}.bigwig.log
+    # 3. Create CPM BigWigs
+    # Forward (+)
+    awk -v sum=\$SUM_TOTAL 'BEGIN{OFS="\\t"} \$5 > 0 && \$6=="+" {printf("%s\\t%i\\t%i\\t%1.2f\\n", \$1,\$2,\$3, 1e6 * \$5 / sum)}' collapsed.bed | \\
+        sort -k1,1 -k2,2n > fwd.bg
+    bedGraphToBigWig fwd.bg ${chrom_sizes} ${meta.id}.CTSS.CPM.fwd.bw
 
-    # ── Genome sizes (hg38) ───────────────────────────────────────
-    # fetchChromSizes from UCSC or use pre-downloaded file
-    if [ ! -f hg38.chrom.sizes ]; then
-        fetchChromSizes hg38 > hg38.chrom.sizes 2>/dev/null || \\
-        wget -q -O hg38.chrom.sizes https://hgdownload.soe.ucsc.edu/goldenPath/hg38/bigZips/hg38.chrom.sizes
+    # Reverse (-)
+    awk -v sum=\$SUM_TOTAL 'BEGIN{OFS="\\t"} \$5 > 0 && \$6=="-" {printf("%s\\t%i\\t%i\\t%1.2f\\n", \$1,\$2,\$3, 1e6 * \$5 / sum)}' collapsed.bed | \\
+        sort -k1,1 -k2,2n > rev.bg
+    bedGraphToBigWig rev.bg ${chrom_sizes} ${meta.id}.CTSS.CPM.rev.bw
+
+    # 4. FANTOM Quantification (Only if files are provided and non-empty)
+    # This logic matches the bash script exactly
+    if [[ -f "${promoter_ref}" && -s "${promoter_ref}" ]]; then
+        # Prepare refs with 0 in score col
+        awk 'BEGIN{OFS="\\t"}{print \$1, \$2, \$3, \$4, "0", \$6}' ${promoter_ref} > Promoter.tmp.bed
+        awk 'BEGIN{OFS="\\t"}{print \$1, \$2, \$3, \$4, "0", \$6}' ${enhancer_ref} > Enhancer.tmp.bed
+
+        # Promoter Counts
+        cat ${ctss_bed} Promoter.tmp.bed | sort -k 1,1 -k 2,2n | \\
+            bedtools merge -d -1 -s -c 5,6 -o sum,distinct -i stdin | \\
+            awk 'BEGIN{OFS="\\t"}{print \$1, \$2, \$3, ".", \$4, \$5}' | \\
+            bedtools intersect -wa -wb -s -a Promoter.tmp.bed -b stdin | \\
+            cut -f 4,11 | sort > ${meta.id}.promoter.fwd.rev.txt
+
+        # Enhancer Counts (Forward)
+        awk '\$6=="+"' ${ctss_bed} | cat - Enhancer.tmp.bed | sort -k 1,1 -k 2,2n | \\
+            bedtools merge -d -1 -c 5 -o sum -i stdin | \\
+            awk 'BEGIN{OFS="\\t"}{print \$1, \$2, \$3, ".", \$4, "+"}' | \\
+            bedtools intersect -wa -wb -a Enhancer.tmp.bed -b stdin | \\
+            cut -f 4,11 | sort > ${meta.id}.enhancer.fwd.txt
+
+        # Enhancer Counts (Reverse)
+        awk '\$6=="-"' ${ctss_bed} | cat - Enhancer.tmp.bed | sort -k 1,1 -k 2,2n | \\
+            bedtools merge -d -1 -c 5 -o sum -i stdin | \\
+            awk 'BEGIN{OFS="\\t"}{print \$1, \$2, \$3, ".", \$4, "-"}' | \\
+            bedtools intersect -wa -wb -a Enhancer.tmp.bed -b stdin | \\
+            cut -f 4,11 | sort > ${meta.id}.enhancer.rev.txt
     fi
-
-    # ── Sense strand BigWig (+ strand CTSS) ───────────────────────
-    zcat ${ctss_bed} | awk '\$6=="+"' | \\
-        awk '{print \$1"\\t"\$2"\\t"\$3"\\t"1}' | \\
-        sort -k1,1 -k2,2n | \\
-        bedtools genomecov -i stdin -g hg38.chrom.sizes -bg -scale \$(echo "1000000 / \$TOTAL" | bc -l) | \\
-        sort -k1,1 -k2,2n > sense_cpm.bedgraph
-
-    bedGraphToBigWig sense_cpm.bedgraph hg38.chrom.sizes ${meta.id}.sense.bw
-    echo "[BigWig] Sense BigWig created." >> ${meta.id}.bigwig.log
-
-    # ── Antisense strand BigWig (- strand CTSS, values negative) ──
-    zcat ${ctss_bed} | awk '\$6=="-"' | \\
-        awk '{print \$1"\\t"\$2"\\t"\$3"\\t"-1}' | \\
-        sort -k1,1 -k2,2n | \\
-        bedtools genomecov -i stdin -g hg38.chrom.sizes -bg -scale \$(echo "1000000 / \$TOTAL" | bc -l) | \\
-        sort -k1,1 -k2,2n > antisense_cpm.bedgraph
-
-    bedGraphToBigWig antisense_cpm.bedgraph hg38.chrom.sizes ${meta.id}.antisense.bw
-    echo "[BigWig] Antisense BigWig created." >> ${meta.id}.bigwig.log
-
-    # ── Count matrix at FANTOM5 enhancer positions ─────────────────
-    # Produces a simple count table for downstream use
-    zcat ${ctss_bed} | \\
-        awk 'BEGIN{OFS="\\t"}{print \$1, \$2, \$3, \$4, \$6}' | \\
-        gzip > ${meta.id}.ctss_counts.tsv.gz
-
-    echo "[BigWig] Done." >> ${meta.id}.bigwig.log
     """
 }

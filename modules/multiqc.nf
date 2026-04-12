@@ -4,26 +4,23 @@
 // ============================================================
 
 process MULTIQC {
-
     label 'process_low'
     publishDir "${params.outdir}/multiqc", mode: 'copy'
 
+    container params.multiqc_container
+
     input:
-    path logs   // All log/QC files collected from every module
+    path 'input_files??/*' // Using a glob pattern helps MultiQC find nested files
 
     output:
     path "multiqc_report.html", emit: report
     path "multiqc_data/",       emit: data
 
     script:
-    def config = params.multiqc_config ? "--config ${params.multiqc_config}" : ""
-    def title  = params.multiqc_title  ? "--title \"${params.multiqc_title}\"" : ""
     """
-    multiqc \\
-        ${config} \\
-        ${title} \\
+    multiqc . \\
+        --filename multiqc_report.html \\
         --force \\
-        --outdir . \\
-        .
+        --interactive
     """
 }
