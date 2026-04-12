@@ -22,3 +22,19 @@ results/
 # OS junk
 .DS_Store
 
+# old modules/scripts
+*/crossvalidate.nf
+*/cell_barcode_ctss.nf
+*/cellranger_multi.nf
+*/mixcr.nf
+*/trimgalore.nf
+
+*/cellranger_multi_with_mixcr.nf
+*/cellranger_final.nf
+*/enhancer_analysis.nf
+*/mixcr_workflow.nf
+*/qc.nf
+
+# scafe and immcantation are temporary out for now, will update later
+*/scafe.nf
+*/immcantation_workflow.nf
