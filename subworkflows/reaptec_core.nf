@@ -14,7 +14,7 @@
 include { STAR_ALIGN          } from '../modules/star_align'
 include { SOFTCLIP_G_FILTER   } from '../modules/softclip_g'
 include { UMITOOLS_DEDUP      } from '../modules/umitools_dedup'
-include { FILTER_BARCODES     } from '../modules/filter_barcodes'
+include { CELL_BARCODE_FILTER     } from '../modules/cell_barcode_filter'
 include { CTSS_BED            } from '../modules/ctss_bed'
 include { CTSS_COUNTS_BIGWIG  } from '../modules/ctss_counts_bigwig'
 include { BIDIR_ENHANCER_CALL } from '../modules/bidir_enhancer_call'
@@ -65,11 +65,11 @@ workflow REAPTEC_CORE {
     ch_filter_input = UMITOOLS_DEDUP.out.bam
         .join( ch_whitelist, by: 0 )
 
-    FILTER_BARCODES(ch_filter_input)
+    CELL_BARCODE_FILTER(ch_filter_input)
 
     // ── STEP 5: CTSS BED generation ──────────────────────────
-    ch_ctss_input = FILTER_BARCODES.out.bam
-        .join( FILTER_BARCODES.out.bai, by: 0 )
+    ch_ctss_input = CELL_BARCODE_FILTER.out.bam
+        .join( CELL_BARCODE_FILTER.out.bai, by: 0 )
 
     CTSS_BED(ch_ctss_input)
 
