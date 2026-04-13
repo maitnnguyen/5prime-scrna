@@ -1,147 +1,257 @@
-#!/usr/bin/env bash
-# ============================================================
-#  bin/fixed_bidir_enhancers.sh
-#  Bidirectional enhancer detection script
-#  Adapted from FANTOM5 consortium (Andersson et al., Nature 2014)
-#  and ReapTEC (Oguchi et al., Science 2024)
-#  Original: github.com/anderssonrobin/enhancers
-#  ReapTEC version: github.com/MurakawaLab/ReapTEC
-# ============================================================
-#
-#  USAGE:
-#    fixed_bidir_enhancers.sh <sense.bed> <antisense.bed> <gap_bp> <out_prefix>
-#
-#  INPUTS:
-#    sense.bed      - BED file of sense strand TSS peaks (+)
-#    antisense.bed  - BED file of antisense strand TSS peaks (-)
-#    gap_bp         - Max gap between sense/antisense pair (default: 500)
-#    out_prefix     - Output file prefix
-#
-#  OUTPUT:
-#    <out_prefix>.bidirectional_enhancers.bed
-#      Format: chr  start  end  name  score  strand
-#              (enhancer center ± window, bidirectional score)
-#
-# ============================================================
+#!/bin/bash
 
-set -euo pipefail
+# bidir_enhancers
+#
+# Robin Andersson (2014)
+# andersson.robin@gmail.com
+#
+# This program is free software: you can redistribute it and/or modify
+# it under the terms of the GNU General Public License as published by
+# the Free Software Foundation, either version 3 of the License, or
+# (at your option) any later version.
+#
+# This program is distributed in the hope that it will be useful,
+# but WITHOUT ANY WARRANTY; without even the implied warranty of
+# MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
+# GNU General Public License for more details.
+#
+# You should have received a copy of the GNU General Public License
+# along with this program.  If not, see <http://www.gnu.org/licenses/>.
 
-SENSE_BED=${1:?"ERROR: sense BED required as arg 1"}
-ANTI_BED=${2:?"ERROR: antisense BED required as arg 2"}
-GAP=${3:-500}
-PREFIX=${4:-"bidirectional"}
-WINDOW=${5:-200}
-MIN_CPM=${6:-2}
+FILES=""         # A single file with paths to files with transcription initiation sites (5' bed6 files with score column quantifying the number of mapped reads)
+TCS=""           # A single file with inferred tag clusters done on pooled data, score column should give pooled expression
+STUB=""          # Name of project (prefix to output files)
+OPATH=""         # Path where to put the output files
+FILTER=""        # Bed file with masked regions for negative filtering of bidirectional loci (e.g. known TSSs +/- 500bp and known exons +/- 200 bp)
+TEMP=""          # Temporary directory to use
+DIST=400         # Maximum distance between divergent tag clusters to be considered the same bidirectional loci (default 400)
+WIN=200          # Size of flanking windows around mid points to consider when quantifying the expression of bidirectional transcribed loci (default 200)
+DIR=0.8          # Directionality threshold in (0,1) for filtering enhancers (default 0.8)
+RMTMP=1
 
-echo "[fixed_bidir_enhancers] ========================="
-echo "[fixed_bidir_enhancers] Sense peaks:     $SENSE_BED"
-echo "[fixed_bidir_enhancers] Antisense peaks: $ANTI_BED"
-echo "[fixed_bidir_enhancers] Max gap:         ${GAP} bp"
-echo "[fixed_bidir_enhancers] Window:          ±${WINDOW} bp"
-echo "[fixed_bidir_enhancers] Min log2CPM:     ${MIN_CPM}"
-echo "[fixed_bidir_enhancers] Output prefix:   $PREFIX"
-echo "[fixed_bidir_enhancers] ========================="
+echoerr() { echo "$@" 1>&2; }
 
-# ── STEP 1: Validate inputs ──────────────────────────────────
-if [ ! -f "$SENSE_BED" ]; then
-    echo "ERROR: Sense BED file not found: $SENSE_BED" >&2; exit 1
+usage() {
+	echoerr
+	echoerr ${0##/*}
+	echoerr "  Robin Andersson (2014), andersson.robin@gmail.com"
+	echoerr "  Localization of transcribed enhancers and quntification of their usage from the"
+	echoerr "  initiation sites of bidirectionally transcribed loci."
+	echoerr "  Used for identifying transcribed enhancers across FANTOM5 samples in"
+	echoerr "  Andersson R et al. 2014. An atlas of active enhancers across human cell types"
+	echoerr "  and tissues. Nature. doi:10.1038/nature12787"
+	echoerr
+	echoerr "Usage:"
+	echoerr "  ${0##/} OPTIONS -f FILE -o PATH"
+	echoerr
+	echoerr "Required:"
+	echoerr "  [-f PATH]     A single file with paths to files with transcription initiation"
+	echoerr "                sites (5' bed6 files with score column quantifying the number of"
+	echoerr "                mapped reads)"
+	echoerr "  [-o PATH]     Path where to put the output files"
+	echoerr
+	echoerr "OPTIONS:"
+	echoerr "  [-c BED]      A single bed6 file with inferred tag clusters done on pooled"
+	echoerr "                data, score column should give pooled expression"
+	echoerr "  [-s STRING]   Name of project (prefix to output files)"
+	echoerr "  [-m BED]      bed file with masked regions for negative filtering of bidirectional"
+	echoerr "                loci (e.g. known TSSs +/- 500bp and known exons +/- 200 bp)"
+	echoerr "  [-t PATH]     Temporary directory to use"
+	echoerr "  [-g N]        Maximum gap between divergent tag clusters to be considered"
+	echoerr "                the same bidirectional loci (default 400)"
+	echoerr "  [-w N]        Size of flanking windows around mid points to consider when"
+	echoerr "                quantifying the expression of bidirectional transcribed loci"
+	echoerr "                (default 200)"
+	echoerr "  [-d N]        Threshold of absolute directionality threshold in (0,1) for"
+	echoerr "                filtering enhancers (default 0.8)"
+	echoerr
+	exit
+}
+
+BINDIR="`dirname \"$0\"`"/../bin
+if [ ! -d $BINDIR ]; then
+	echoerr "cannot locate bin directory (../bin relative the path to this script)"
+	exit
 fi
-if [ ! -f "$ANTI_BED" ]; then
-    echo "ERROR: Antisense BED file not found: $ANTI_BED" >&2; exit 1
+
+## show usage if '-h' or  '--help' is the first argument or no argument is given
+case $1 in
+	""|"-h"|"--help") usage ;;
+esac
+
+## Needed scripts in the bin/ directory:
+## split_strand.pl
+## bed12_merge_pairs_dynamic.pl
+## sum_matrices.pl
+## tpm_transform.pl
+## matrix_directionality.pl
+## matrix_bidirectional_transcribed.pl
+
+## read the paramters
+while getopts f:c:o:s:m:t:g:w:d: opt; do
+	case ${opt} in
+		f) FILES=${OPTARG};;
+		c) TCS=${OPTARG};;
+		o) OPATH=${OPTARG};;
+		s) STUB=${OPTARG};;
+		m) FILTER=${OPTARG};;
+		t) TEMP=${OPTARG};;
+		g) DIST=${OPTARG};;
+		w) WIN=${OPTARG};;
+		d) DIR=${OPTARG};;
+		*) usage;;
+	esac
+done
+
+## check the parameters
+if [ "$FILES" == "" ]; then echoerr "f parameter is required"; usage; fi
+if [ "$FILES" != "" ] && [ ! -e $FILES ]; then echoerr "No such file ${FILES}"; usage; fi
+if [ "$TCS" != "" ] && [ ! -e $TCS ]; then echoerr "No such file ${TCS}"; usage; fi
+if [ "$OPATH" == "" ]; then echoerr "o parameter is required"; usage; fi
+if [ "$OPATH" != "" ] && [ ! -d $OPATH ]; then mkdir $OPATH; fi
+if [ "$TEMP" == "" ]; then TEMP=`mktemp -d`; fi
+if [ "$TEMP" != "" ]; then RMTMP=0; fi
+if [ "$TEMP" != "" ] && [ ! -d $TEMP ]; then mkdir $TEMP; fi
+if [ "$FILTER" != "" ] && [ ! -e $FILTER ]; then echoerr "No such file ${FILTER}"; usage; fi
+if [[ ! $DIR =~ ^0.[0-9]+$ ]]; then echoerr "directionality threshold must be a float in (0,1)"; usage; fi
+if [[ ! $DIST =~ ^[0-9]+$ ]]; then echoerr "distance must be an integer"; usage; fi
+if [[ ! $WIN =~ ^[0-9]+$ ]]; then echoerr "window size must be an integer"; usage; fi
+
+echoerr "Running \"`basename $0`\" with parameters \"$*\""
+echoerr "Robin Andersson (2014), andersson.robin@gmail.com"
+echoerr "https://github.com/anderssonrobin/enhancers"
+echoerr
+
+## Add slash to output and temp paths if needed
+if  [[ ! $OPATH == */ ]]; then
+	OPATH=${OPATH}/
+fi
+if  [[ ! $TEMP == */ ]]; then
+	TEMP=${TEMP}/
 fi
 
-SENSE_N=$(wc -l < "$SENSE_BED")
-ANTI_N=$(wc -l < "$ANTI_BED")
-echo "[fixed_bidir_enhancers] Input: $SENSE_N sense peaks | $ANTI_N antisense peaks"
+if [ "$TCS" != "" ]; then
+	cut -f -6 $TCS | sort -k 1,1 -k 2,2n --temporary-directory=${TEMP} > ${TEMP}${STUB}TCs.bed
+fi
+TCFILE=${TEMP}${STUB}TCs.bed
 
-# ── STEP 2: Merge CTSS within 10bp on same strand ────────────
-# This clusters individual TSS positions into broader peaks
-# 10bp merge window is the ReapTEC default from fixed_bidir_enhancers_10bp.sh
+## Identify tag clusters, if needed
+## Note: The Andersson et al. (2014) study used DPI tag clusters described in Forrest A et al. 2014. Nature. (doi:10.1038/nature13182).
+if [ "$TCS" == "" ]; then
+	echoerr "Identifying tag clusters"
+	BED=${TEMP}${STUB}pooled.bed
+	MBED=${TEMP}${STUB}pooled.merged.bed
+	if [ -e $BED ]; then rm $BED; fi
+	touch $BED
+	for FILE in $( cat $FILES ); do cat $FILE >> $BED; done
+	sort --temporary-directory=${TEMP} -k 1,1 -k 2,2n -k 3,3n -k 6,6 $BED | bedtools groupby -i stdin -g 1,2,3,6 -c 5 -o sum | awk 'BEGIN{OFS="\t"}{print $1, $2, $3, NR, $5, $4}' > $MBED
+	bedtools merge -d 10 -s -c 5,6 -o sum,distinct -i $MBED | awk 'BEGIN{OFS="\t"}{if ($4 > 0) {print $1, $2, $3, $1 ":" $2 "-" $3 "," $5, $4, $5}}' | sort --temporary-directory=${TEMP} -k 1,1 -k 2,2n > ${OPATH}${STUB}TCs.bed
+	TCFILE=${OPATH}${STUB}TCs.bed
+fi
 
-echo "[fixed_bidir_enhancers] Step 2: Merging CTSS within 10bp..."
+## Identify bidirectional transcribed loci
+echoerr "Identifying bidirectionally transcribed loci"
+${BINDIR}/split_strand.pl $TCFILE ${TEMP}${STUB}TCs.plus.bed ${TEMP}${STUB}TCs.minus.bed
 
-bedtools merge -d 10 -i "$SENSE_BED" \
-    -c 5 -o sum \
-    | awk 'BEGIN{OFS="\t"}{print $1,$2,$3,"sense_"NR,$4,"+"}' \
-    | sort -k1,1 -k2,2n > tmp_sense_merged.bed
+bedtools intersect -v -wa -a ${TEMP}${STUB}TCs.plus.bed -b ${TEMP}${STUB}TCs.minus.bed > ${TEMP}${STUB}TCs.plus.no.minus.bed
+bedtools intersect -v -wa -b ${TEMP}${STUB}TCs.plus.bed -a ${TEMP}${STUB}TCs.minus.bed > ${TEMP}${STUB}TCs.minus.no.plus.bed
+bedtools window -l 0 -r $DIST -a ${TEMP}${STUB}TCs.minus.no.plus.bed -b ${TEMP}${STUB}TCs.plus.no.minus.bed | awk 'BEGIN{OFS="\t"}{print $0, $3-$8}' > ${TEMP}${STUB}TCs.bidir.pairs.bed
+sort --temporary-directory=${TEMP} -k 1,1 -k 2,2n -o ${TEMP}${STUB}TCs.bidir.pairs.bed ${TEMP}${STUB}TCs.bidir.pairs.bed
+## Merge pairs and discard bidirectional transcribed loci too close to chromosome starts
+${BINDIR}/bed12_merge_pairs_dynamic.pl ${TEMP}${STUB}TCs.bidir.pairs.bed | awk -v win=$WIN 'BEGIN{OFS="\t"}{if (($7-win) >= 0) {print $1, $2, $3, $1 ":" $2 "-" $3, $5, $6, $7, $8, $9, $10, $11, $12}}' > ${OPATH}${STUB}bidir.pairs.bed
 
-bedtools merge -d 10 -i "$ANTI_BED" \
-    -c 5 -o sum \
-    | awk 'BEGIN{OFS="\t"}{print $1,$2,$3,"anti_"NR,$4,"-"}' \
-    | sort -k1,1 -k2,2n > tmp_anti_merged.bed
+BPS=${OPATH}${STUB}bidir.pairs.bed
 
-SENSE_MERGED=$(wc -l < tmp_sense_merged.bed)
-ANTI_MERGED=$(wc -l < tmp_anti_merged.bed)
-echo "[fixed_bidir_enhancers] After 10bp merge: $SENSE_MERGED sense | $ANTI_MERGED antisense"
+## Filter for known TSSs and exons
+if [ "$FILTER" != "" ]; then
+	echoerr "Filtering masked regions"
+	bedtools intersect -v -wa -a ${OPATH}${STUB}bidir.pairs.bed -b $FILTER > ${OPATH}${STUB}bidir.pairs.filtered.bed
+	sort --temporary-directory=${TEMP} -k 1,1 -k 2,2n -o ${OPATH}${STUB}bidir.pairs.filtered.bed ${OPATH}${STUB}bidir.pairs.filtered.bed
+	BPS=${OPATH}${STUB}bidir.pairs.filtered.bed
+fi
 
-# ── STEP 3: Find bidirectional pairs within gap ───────────────
-# For each sense peak, find antisense peaks within GAP bp
-# The pair must be on opposite strands (enforced by -Sm flag)
+ESTUB=$( echo $BPS | sed -e "s/\.bed//" )
+ESTUB=`basename $ESTUB`
 
-echo "[fixed_bidir_enhancers] Step 3: Pairing sense/antisense peaks within ${GAP}bp..."
+## Quantify expression
+echoerr "Quantifying expression across files"
+awk -v win=$WIN 'BEGIN{OFS="\t"}{print $1,$7-win,$7,$4,".","-"}' $BPS > ${TEMP}${ESTUB}.left.minus.window.bed
+awk -v win=$WIN 'BEGIN{OFS="\t"}{print $1,$8,$8+win,$4,".","-"}' $BPS > ${TEMP}${ESTUB}.right.minus.window.bed
+awk -v win=$WIN 'BEGIN{OFS="\t"}{print $1,$7-win,$7,$4,".","+"}' $BPS > ${TEMP}${ESTUB}.left.plus.window.bed
+awk -v win=$WIN 'BEGIN{OFS="\t"}{print $1,$8,$8+win,$4,".","+"}' $BPS > ${TEMP}${ESTUB}.right.plus.window.bed
 
-bedtools window \
-    -a tmp_sense_merged.bed \
-    -b tmp_anti_merged.bed \
-    -w "$GAP" \
-    -Sm \
-    | awk -v win="$WINDOW" 'BEGIN{OFS="\t"}{
-        # Sense peak center
-        s_center = int(($2 + $3) / 2);
-        # Antisense peak center
-        a_center = int(($8 + $9) / 2);
-        # Enhancer center = midpoint
-        enh_center = int((s_center + a_center) / 2);
-        enh_start  = enh_center - win;
-        enh_end    = enh_center + win;
-        if (enh_start < 0) enh_start = 0;
-        # Bidirectional score = sum of both strand signals
-        bidir_score = $5 + $11;
-        distance    = a_center - s_center;
-        print $1, enh_start, enh_end, \
-              "btcEnh_"NR, bidir_score, ".", \
-              s_center, a_center, $5, $11, distance
-    }' \
-    | sort -k1,1 -k2,2n > tmp_bidir_raw.bed
+cut -f 4 ${TEMP}${ESTUB}.left.minus.window.bed > ${TEMP}${ESTUB}.expression.left.minus.matrix
+cut -f 4 ${TEMP}${ESTUB}.right.minus.window.bed > ${TEMP}${ESTUB}.expression.right.minus.matrix
+cut -f 4 ${TEMP}${ESTUB}.left.plus.window.bed > ${TEMP}${ESTUB}.expression.left.plus.matrix
+cut -f 4 ${TEMP}${ESTUB}.right.plus.window.bed > ${TEMP}${ESTUB}.expression.right.plus.matrix
 
-RAW_N=$(wc -l < tmp_bidir_raw.bed)
-echo "[fixed_bidir_enhancers] Raw bidirectional pairs: $RAW_N"
+LIBRARYCOUNTS=${OPATH}${STUB}library.counts.txt
+if [ -e $LIBRARYCOUNTS ]; then rm $LIBRARYCOUNTS; fi
+touch $LIBRARYCOUNTS
 
-# ── STEP 4: Merge overlapping enhancer candidates ────────────
-echo "[fixed_bidir_enhancers] Step 4: Merging overlapping candidates..."
+for FILE in $( cat $FILES ); do
+	CNT=`awk '{SUM += $5} END {print SUM}' $FILE`
+	echo $CNT >> $LIBRARYCOUNTS
+	for SIDE in left right; do
+		for STRAND in plus minus; do
+			bedtools intersect -wao -s -a ${TEMP}${ESTUB}.${SIDE}.${STRAND}.window.bed -b $FILE | sort --temporary-directory=${TEMP} -k 1,1 -k 2,2n | cut -f 1,2,3,4,5,6,11 | awk 'BEGIN{OFS="\t"} {v = $7; if (v <= 0) v = 0; print $1,$2,$3,$4,$5,$6,v}' | bedtools groupby -g 1,2,3,4,5,6 -c 7 -o sum | sort --temporary-directory=${TEMP} -k 1,1 -k 2,2n | cut -f 7 > ${TEMP}${ESTUB}.expression.${SIDE}.${STRAND}.tmp &
+		done
+		wait
+		for STRAND in plus minus; do
+			paste ${TEMP}${ESTUB}.expression.${SIDE}.${STRAND}.matrix ${TEMP}${ESTUB}.expression.${SIDE}.${STRAND}.tmp > ${TEMP}${ESTUB}.expression.${SIDE}.${STRAND}.tmp2
+			mv ${TEMP}${ESTUB}.expression.${SIDE}.${STRAND}.tmp2 ${TEMP}${ESTUB}.expression.${SIDE}.${STRAND}.matrix
+		done
+	done
+done
+rm ${TEMP}${ESTUB}.expression.left.plus.tmp
+rm ${TEMP}${ESTUB}.expression.left.minus.tmp
+rm ${TEMP}${ESTUB}.expression.right.plus.tmp
+rm ${TEMP}${ESTUB}.expression.right.minus.tmp
 
-cut -f1-6 tmp_bidir_raw.bed \
-    | bedtools merge -i stdin -c 4,5 -o first,sum \
-    | awk 'BEGIN{OFS="\t"}{print $1,$2,$3,"btcEnh_"NR,$5,"."}' \
-    | sort -k1,1 -k2,2n > tmp_merged_enhancers.bed
+${BINDIR}/sum_matrices.pl ${TEMP}${ESTUB}.expression.left.minus.matrix ${TEMP}${ESTUB}.expression.right.plus.matrix 1 | paste $BPS - | cut -f 4,13- > ${OPATH}${ESTUB}.expression.matrix
 
-MERGED_N=$(wc -l < tmp_merged_enhancers.bed)
-echo "[fixed_bidir_enhancers] After merge: $MERGED_N candidates"
+## TPM normalize
+echoerr "Normalizing expression to tags per million mapped tags (TPM)"
+${BINDIR}/tpm_transform.pl ${OPATH}${ESTUB}.expression.matrix ${LIBRARYCOUNTS} 1 | paste $BPS - | cut -f 4,13- > ${OPATH}${ESTUB}.expression.tpm.matrix
+	
+## TPM normalize each strand separately
+for STRAND in minus plus; do
+	for SIDE in left right; do
+		${BINDIR}/tpm_transform.pl ${TEMP}${ESTUB}.expression.${SIDE}.${STRAND}.matrix ${LIBRARYCOUNTS} 1 | paste $BPS - | cut -f 4,13- > ${TEMP}${ESTUB}.expression.${SIDE}.${STRAND}.tpm.matrix
+	done
+done
 
-# ── STEP 5: Apply CPM score filter ───────────────────────────
-echo "[fixed_bidir_enhancers] Step 5: Applying log2CPM >= ${MIN_CPM} filter..."
+## Calculate directionality scores
+echoerr "Calculating directionality scores"
+for STRAND in minus plus; do
+	for SIDE in left right; do
+		awk '{s=0; for (i=2; i<=NF; i++) {if ($i != "NA") s+=$i}; print s}' ${TEMP}${ESTUB}.expression.${SIDE}.${STRAND}.tpm.matrix > ${TEMP}${ESTUB}.expression.${SIDE}.${STRAND}.tpm.sum
+	done
+done
+paste ${TEMP}${ESTUB}.expression.right.plus.tpm.sum ${TEMP}${ESTUB}.expression.left.minus.tpm.sum | awk '{print ($1 == "NA" || ($1+$2 == 0)) ? "NA" : ($1-$2) / ($1+$2)}' | paste $BPS - | cut -f 4,13 > ${OPATH}${ESTUB}.directionality.txt
+paste ${TEMP}${ESTUB}.expression.left.plus.tpm.sum ${TEMP}${ESTUB}.expression.left.minus.tpm.sum | awk '{print ($1 == "NA" || $2 == 0) ? "NA" : $1 / $2}' | paste $BPS - | cut -f 4,13 > ${TEMP}${ESTUB}.left.plus.fraction.txt
+paste ${TEMP}${ESTUB}.expression.right.minus.tpm.sum ${TEMP}${ESTUB}.expression.right.plus.tpm.sum | awk '{print ($1 == "NA" || $2 == 0) ? "NA" : $1 / $2}' | paste $BPS - | cut -f 4,13 > ${TEMP}${ESTUB}.right.minus.fraction.txt
 
-awk -v min_cpm="$MIN_CPM" '
-    $5 >= min_cpm { print }
-' tmp_merged_enhancers.bed > "${PREFIX}.bidirectional_enhancers.bed"
+## Calculate directionality matrix
+${BINDIR}/matrix_directionality.pl ${TEMP}${ESTUB}.expression.right.plus.tpm.matrix ${TEMP}${ESTUB}.expression.left.minus.tpm.matrix 1 | paste $BPS - | cut -f 4,13- > ${OPATH}${ESTUB}.directionality.matrix
 
-FINAL_N=$(wc -l < "${PREFIX}.bidirectional_enhancers.bed")
-echo "[fixed_bidir_enhancers] Final enhancers (log2CPM >= ${MIN_CPM}): $FINAL_N"
+## Check if bidirectionally transcribed in at least one sample
+${BINDIR}/matrix_bidirectional_transcribed.pl ${TEMP}${ESTUB}.expression.left.minus.matrix ${TEMP}${ESTUB}.expression.right.plus.matrix 1 > ${TEMP}${ESTUB}.bidir.transcribed.txt
 
-# ── STEP 6: Summary statistics ───────────────────────────────
-echo ""
-echo "[fixed_bidir_enhancers] ====== SUMMARY ======"
-echo "[fixed_bidir_enhancers] Sense peaks input:         $SENSE_N"
-echo "[fixed_bidir_enhancers] Antisense peaks input:     $ANTI_N"
-echo "[fixed_bidir_enhancers] After 10bp merge (sense):  $SENSE_MERGED"
-echo "[fixed_bidir_enhancers] After 10bp merge (anti):   $ANTI_MERGED"
-echo "[fixed_bidir_enhancers] Raw bidirectional pairs:   $RAW_N"
-echo "[fixed_bidir_enhancers] After candidate merge:     $MERGED_N"
-echo "[fixed_bidir_enhancers] Final btcEnhs:             $FINAL_N"
-echo "[fixed_bidir_enhancers] Output: ${PREFIX}.bidirectional_enhancers.bed"
-echo "[fixed_bidir_enhancers] ====================="
+## Enhancer prediction
+echoerr "Predicting enhancers"
+cut -f 2 ${TEMP}${ESTUB}.left.plus.fraction.txt > ${TEMP}${ESTUB}.lp.txt
+cut -f 2 ${TEMP}${ESTUB}.right.minus.fraction.txt > ${TEMP}${ESTUB}.rm.txt
+cut -f 2 ${OPATH}${ESTUB}.directionality.txt > ${TEMP}${ESTUB}.wdir.txt
+paste $BPS ${TEMP}${ESTUB}.lp.txt ${TEMP}${ESTUB}.rm.txt ${TEMP}${ESTUB}.wdir.txt ${TEMP}${ESTUB}.bidir.transcribed.txt | awk -v dir=$DIR '{if ($13 < 1 && $14 < 1 && $15 < dir && $15 > (-1*dir) && $16 == 1) print $0}' | cut -f -12 > ${OPATH}${STUB}enhancers.bed
 
-# ── Cleanup temp files ────────────────────────────────────────
-rm -f tmp_sense_merged.bed tmp_anti_merged.bed tmp_bidir_raw.bed tmp_merged_enhancers.bed
+sort --temporary-directory=${TEMP} -k 4,4 -o $BPS $BPS
+sort --temporary-directory=${TEMP} -k 1,1 -o ${OPATH}${ESTUB}.expression.matrix ${OPATH}${ESTUB}.expression.matrix
+sort --temporary-directory=${TEMP} -k 1,1 -o ${OPATH}${ESTUB}.expression.tpm.matrix ${OPATH}${ESTUB}.expression.tpm.matrix
+sort --temporary-directory=${TEMP} -k 1,1 -o ${OPATH}${ESTUB}.directionality.txt ${OPATH}${ESTUB}.directionality.txt
+sort --temporary-directory=${TEMP} -k 1,1 -o ${OPATH}${ESTUB}.directionality.matrix ${OPATH}${ESTUB}.directionality.matrix
+sort --temporary-directory=${TEMP} -k 4,4 -o ${OPATH}${STUB}enhancers.bed ${OPATH}${STUB}enhancers.bed
+cut -f 4 ${OPATH}${STUB}enhancers.bed | join -1 1 -2 1 - ${OPATH}${ESTUB}.expression.matrix | tr " " "\t" > ${OPATH}${STUB}enhancer.expression.matrix
+cut -f 4 ${OPATH}${STUB}enhancers.bed | join -1 1 -2 1 - ${OPATH}${ESTUB}.expression.tpm.matrix | tr " " "\t" > ${OPATH}${STUB}enhancer.expression.tpm.matrix
 
-echo "[fixed_bidir_enhancers] Done."
+if [ $RMTMP -eq 1 ]; then rm -rf $TEMP; fi
