@@ -23,9 +23,12 @@ process BIDIR_ENHANCER_CALL {
     path "${meta.id}_enhancers/*.expression.tpm.matrix", emit: tpm_matrix
     path "${meta.id}_enhancers/*.directionality.txt",    emit: directionality
 
-    module 'BEDTools/2.31.1-GCC-14.3.0'
     script:
     """
+    # load bedtools module
+    module load BEDTools/2.31.1-GCC-14.3.0
+    module load OpenSSL/3.6
+    
     # 1. Prepare the bedlist file required by the Andersson/Murakawa script
     # The script expects a file containing absolute paths to input BEDs
     echo "\$(readlink -f ${ctss_bed})" > bedlist.txt

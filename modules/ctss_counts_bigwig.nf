@@ -26,6 +26,10 @@ process CTSS_COUNTS_BIGWIG {
 
     script:
     """
+    # load bedtools module
+    module load BEDTools/2.31.1-GCC-14.3.0
+    module load OpenSSL/3.6
+    
     # 1. Calculate Total CTSS sum for CPM (Column 5 in your CTSS.bed)
     SUM_TOTAL=\$(awk 'BEGIN{sum=0}{sum=sum+\$5}END{print sum}' ${ctss_bed})
 
