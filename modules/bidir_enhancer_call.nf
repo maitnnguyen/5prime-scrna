@@ -39,7 +39,7 @@ process BIDIR_ENHANCER_CALL {
     # -s: prefix/stub for output files
     # -o: output directory
     
-    fixed_bidir_enhancers_10bp \\
+    fixed_bidir_enhancers_10bp.sh \\
         -f bedlist.txt \\
         -m ${mask_bed} \\
         -s ${meta.id}_ \\
