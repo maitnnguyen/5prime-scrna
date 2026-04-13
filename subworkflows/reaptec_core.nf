@@ -62,10 +62,10 @@ workflow REAPTEC_CORE {
 
     // ── STEP 4: Filter to valid cell barcodes ────────────────
     // HPC samtools -D CB for exact tag matching against whitelist
-    ch_filter_input = UMITOOLS_DEDUP.out.bam
-        .join( ch_whitelist, by: 0 )
+    //ch_filter_input = UMITOOLS_DEDUP.out.bam
+    //    .join( ch_whitelist, by: 0 )
 
-    CELL_BARCODE_FILTER(ch_filter_input)
+    CELL_BARCODE_FILTER(UMITOOLS_DEDUP.out.bam, ch_whitelist)
 
     // ── STEP 5: CTSS BED generation ──────────────────────────
     ch_ctss_input = CELL_BARCODE_FILTER.out.bam
