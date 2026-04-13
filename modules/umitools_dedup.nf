@@ -36,8 +36,8 @@ process UMITOOLS_DEDUP {
     script:
     """
     # Re-encode BAM with HPC samtools before dedup (fixes str/bytes bug in umi_tools)
-    samtools view -h ${bam} | samtools view -b -o reencoded.bam
-    samtools index reencoded.bam
+    #samtools view -h ${bam} | samtools view -b -o reencoded.bam
+    #samtools index reencoded.bam
 
     # ── Step 1: UMI deduplication ─────────────────────────────
     # Use raw CR/UR tags per official ReapTEC protocol.
