@@ -16,7 +16,7 @@ process SOFTCLIP_G_FILTER {
 
     output:
     tuple val(meta), path("SoftclipG_${meta.id}.bam"), emit: bam
-    path "SoftclipG_${meta.id}.bam.bai"              , emit: bai
+    tuple val(meta), path("SoftclipG_${meta.id}.bam.bai"), emit: bai
     tuple val(meta), path("${meta.id}.softclipG.log"),     emit: log
 
     script:
