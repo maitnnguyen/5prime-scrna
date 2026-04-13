@@ -23,6 +23,7 @@ process BIDIR_ENHANCER_CALL {
     path "${meta.id}_enhancers/*.expression.tpm.matrix", emit: tpm_matrix
     path "${meta.id}_enhancers/*.directionality.txt",    emit: directionality
 
+    module 'BEDTools/2.31.1-GCC-14.3.0'
     script:
     """
     # 1. Prepare the bedlist file required by the Andersson/Murakawa script
