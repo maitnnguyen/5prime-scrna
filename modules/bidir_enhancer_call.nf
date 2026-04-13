@@ -18,10 +18,12 @@ process BIDIR_ENHANCER_CALL {
     path mask_bed                  // The Gencode (hg38) or T2T-specific mask BED
 
     output:
-    tuple val(meta), path("${meta.id}_enhancers/"), emit: dir
-    path "${meta.id}_enhancers/*.enhancers.bed",    emit: bed
-    path "${meta.id}_enhancers/*.expression.tpm.matrix", emit: tpm_matrix
-    path "${meta.id}_enhancers/*.directionality.txt",    emit: directionality
+    tuple val(meta), path("${meta.id}_enhancers/"),                                          emit: dir
+    tuple val(meta), path("${meta.id}_enhancers/${meta.id}_enhancers.bed"),                  emit: bed
+    tuple val(meta), path("${meta.id}_enhancers/${meta.id}_bidir.pairs.filtered.expression.tpm.matrix"), emit: tpm_matrix
+    tuple val(meta), path("${meta.id}_enhancers/${meta.id}_bidir.pairs.filtered.directionality.txt"),    emit: directionality
+    tuple val(meta), path("${meta.id}_enhancers/${meta.id}_bidir.pairs.filtered.bed"),       emit: filtered_pairs
+    tuple val(meta), path("${meta.id}_enhancers/${meta.id}_TCs.bed"),                        emit: tcs
 
     script:
     """
