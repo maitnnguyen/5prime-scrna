@@ -13,6 +13,7 @@
 include { STAR_ALIGN          } from '../modules/star_align'
 include { SOFTCLIP_G_FILTER   } from '../modules/softclip_g'
 include { UMITOOLS_DEDUP      } from '../modules/umitools_dedup'
+include { CELL_BARCODE_FILTER } from '../modules/cell_barcode_filter'
 include { CTSS_BED            } from '../modules/ctss_bed'
 include { CTSS_COUNTS_BIGWIG  } from '../modules/ctss_counts_bigwig'
 include { BIDIR_ENHANCER_CALL } from '../modules/bidir_enhancer_call'
@@ -63,10 +64,16 @@ workflow REAPTEC_CORE {
 
     UMITOOLS_DEDUP(ch_dedup_input)
 
+    // ── STEP 3.5: Filter to valid cell barcodes ────────────────
+    ch_filter_input = UMITOOLS_DEDUP.out.bam
+        .join( ch_whitelist, by: 0 )
+
+    CELL_BARCODE_FILTER(ch_filter_input)
+
     // ── STEP 4: CTSS BED generation ───────────────────────────
     // Join bam + bai into single tuple so meta is never lost
-    ch_ctss_input = UMITOOLS_DEDUP.out.bam
-        .join( UMITOOLS_DEDUP.out.bai, by: 0 )
+    ch_ctss_input = CELL_BARCODE_FILTER.out.bam
+        .join( CELL_BARCODE_FILTER.out.bai, by: 0 )
         // → [ meta, bam, bai ]
 
     CTSS_BED(ch_ctss_input)
