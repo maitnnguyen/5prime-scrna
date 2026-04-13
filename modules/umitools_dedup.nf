@@ -47,7 +47,7 @@ process UMITOOLS_DEDUP {
     umi_tools dedup \\
         -I ${bam} \\
         --per-cell \\
-        --cell-tag=CB \\
+        --cell-tag=CR \\
         --umi-tag=UR \\
         --extract-umi-method=tag \\
         --method=unique \\
