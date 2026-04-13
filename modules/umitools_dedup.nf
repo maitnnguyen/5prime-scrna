@@ -35,6 +35,10 @@ process UMITOOLS_DEDUP {
 
     script:
     """
+    # Re-encode BAM with HPC samtools before dedup (fixes str/bytes bug in umi_tools)
+    samtools view -h ${bam} | samtools view -b -o reencoded.bam
+    samtools index reencoded.bam
+
     # ── Step 1: UMI deduplication ─────────────────────────────
     # Use raw CR/UR tags per official ReapTEC protocol.
     # STARsolo writes CR/UR for ALL reads; CB/UB only for whitelist-matched.
@@ -44,7 +48,7 @@ process UMITOOLS_DEDUP {
         -I ${bam} \\
         --per-cell \\
         --cell-tag=CB \\
-        --umi-tag=UB \\
+        --umi-tag=UR \\
         --extract-umi-method=tag \\
         --method=unique \\
         --log=${meta.id}.dedup.log \\
