@@ -38,19 +38,26 @@ process CTSS_COUNTS_BIGWIG {
         bedtools groupby -g 1,2,3,4,6 -c 5 -o sum | \\
         awk 'BEGIN{OFS="\\t"}{print \$1, \$2, \$3, \$4, \$6, \$5}' > collapsed.bed
 
+    # Extract valid chromosome names from chrom.sizes
+    cut -f1 ${chrom_sizes} > valid_chroms.txt
+
     # 3. Create CPM BigWigs
     # Forward (+)
     awk -v sum=\$SUM_TOTAL 'BEGIN{OFS="\\t"} \$5 > 0 && \$6=="+" {printf("%s\\t%i\\t%i\\t%1.2f\\n", \$1,\$2,\$3, 1e6 * \$5 / sum)}' collapsed.bed | \\
         sort -k1,1 -k2,2n > fwd.bg
     # Filter forward bedgraph to canonical chromosomes only
-    awk '$1 ~ /^chr([0-9]+|X|Y|M)$/' fwd.bg | sort -k1,1 -k2,2n > fwd.canonical.bg
+    awk 'NR==FNR{valid[$1]=1; next} $1 in valid' valid_chroms.txt fwd.bg \
+    | sort -k1,1 -k2,2n > fwd.canonical.bg
+    
     bedGraphToBigWig fwd.canonical.bg ${chrom_sizes} ${meta.id}.CTSS.CPM.fwd.bw
 
     # Reverse (-)
     awk -v sum=\$SUM_TOTAL 'BEGIN{OFS="\\t"} \$5 > 0 && \$6=="-" {printf("%s\\t%i\\t%i\\t%1.2f\\n", \$1,\$2,\$3, 1e6 * \$5 / sum)}' collapsed.bed | \\
         sort -k1,1 -k2,2n > rev.bg
     # Filter reverse bedgraph to canonical chromosomes only
-    awk '$1 ~ /^chr([0-9]+|X|Y|M)$/' rev.bg | sort -k1,1 -k2,2n > rev.canonical.bg
+    awk 'NR==FNR{valid[$1]=1; next} $1 in valid' valid_chroms.txt rev.bg \
+    | sort -k1,1 -k2,2n > rev.canonical.bg
+
     bedGraphToBigWig rev.canonical.bg ${chrom_sizes} ${meta.id}.CTSS.CPM.rev.bw
 
     # 4. FANTOM Quantification (Only if files are provided and non-empty)
