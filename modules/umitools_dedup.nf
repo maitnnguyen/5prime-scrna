@@ -36,10 +36,9 @@ process UMITOOLS_DEDUP {
     umi_tools dedup \\
         -I ${bam} \\
         --per-cell \\
+        --extract-umi-method=tag \\
         --cell-tag=CR \\
         --umi-tag=UR \\
-        --extract-umi-method=tag \\
-        --method=unique \\
         --log=${meta.id}.dedup.log \\
         -S ${meta.id}.dedup.bam
     """

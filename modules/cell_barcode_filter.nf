@@ -17,8 +17,7 @@ process CELL_BARCODE_FILTER {
     publishDir "${params.outdir}/${params.genome}/reaptec/dedup", mode: 'copy'
 
     input:
-    tuple val(meta), path(bam)
-    tuple val(meta), path(whitelist)
+    tuple val(meta), path(bam), path(whitelist)
 
     output:
     tuple val(meta), path("${meta.id}.dedup.filtered.bam"),     emit: bam
