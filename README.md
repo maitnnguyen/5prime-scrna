@@ -17,14 +17,13 @@ Samplesheet (sample, lane, condition, gex_r1, gex_r2, bcr_r1, bcr_r2)
 │
 ├── GEX library
 │   ├── Cell Ranger count ──► BAM ──┬── SCAFE ───────────► tCRE matrix (TSS)
-│   │                               ├── CamoTSS ──────────► alternative TSS
-│   │                               └── GEX matrix
-│   │                                       └── Seurat ───► clustering + UMAP
+│   │                |              └── GEX matrix
+│   │                |barcode               └── Seurat ──► clustering + UMAP
 │   └── ReapTEC (STARsolo) ──────────────────────────────► btcEnh → DESeq2
 │
 └── BCR library
     ├── Cell Ranger VDJ ─────────────────────────────────► clonotypes
-    └── MiXCR ───────────────────────────────────────────► SHM + isotype
+    └── Immcantation ────────────────────────────────────► SHM + isotype
 ```
 
 ---
@@ -36,7 +35,6 @@ Samplesheet (sample, lane, condition, gex_r1, gex_r2, bcr_r1, bcr_r2)
 | QC | FastQC + MultiQC | GEX + BCR FASTQ | HTML QC report |
 | Alignment + GEX | Cell Ranger count | GEX FASTQ | BAM + gene matrix |
 | TSS analysis | SCAFE | Cell Ranger BAM | tCRE matrix |
-| Alternative TSS | CamoTSS | Cell Ranger BAM (filtered xf:i:25) | TC + CTSS |
 | Enhancer calling | ReapTEC (STARsolo) | GEX FASTQ | btcEnh BED + DESeq2 |
 | BCR repertoire | Cell Ranger VDJ | BCR FASTQ | Clonotypes |
 | BCR repertoire | MiXCR | BCR FASTQ | SHM + isotype + clonal evolution |
@@ -49,7 +47,7 @@ Samplesheet (sample, lane, condition, gex_r1, gex_r2, bcr_r1, bcr_r2)
 - Nextflow ≥ 23.04
 - Singularity (for HPC) or Docker
     - Cell Ranger (ref link: )
-    - MiXCR (ref link: )
+    - Immcancation (ref link: )
 - ≥ 64GB RAM per sample
 - ≥ 500GB disk space for full cohort
 
@@ -91,7 +89,7 @@ Patient1,L001,CVID,/path/Patient1_S5_L001_R1_001.fastq.gz,/path/Patient1_S5_L001
 | `bcr_r1` | Full path to BCR R1 FASTQ |
 | `bcr_r2` | Full path to BCR R2 FASTQ |
 
-Generate samplesheet automatically:
+Generate samplesheet automatically (customized):
 
 ```bash
 python3 bin/generate_samplesheet.py
@@ -138,7 +136,7 @@ nextflow run main.nf \
 |---|---|---|
 | `--input` | required | Path to samplesheet CSV |
 | `--outdir` | `results/` | Output directory |
-| `--genome` | `hg38` | Reference genome |
+| `--genome` | `hg38` | Reference genome build: hg38 or t2t |
 | `--cellranger_ref` | required | Cell Ranger GEX reference folder |
 | `--cellranger_vdj_ref` | required | Cell Ranger VDJ reference folder |
 | `--scafe_genome` | `hg38.gencode_v49` | SCAFE genome name |
@@ -150,11 +148,12 @@ nextflow run main.nf \
 | `--bidir_gap` | `500` | Max gap (bp) between sense/antisense TSS pairs for ReapTEC |
 | `--min_cpm` | `2` | log2CPM cutoff for TSS peak filtering |
 | `--resolution` | `0.5` | Seurat clustering resolution |
+| `--skip_fastq` | `false` | Skip running FASTQC |
+| `--skip_cellranger` | `false` | Skip cellranger if this has been run separately |
 | `--skip_scafe` | `false` | Skip SCAFE branch |
-| `--skip_camotss` | `false` | Skip CamoTSS branch |
 | `--skip_reaptec` | `false` | Skip ReapTEC branch |
 | `--skip_vdj` | `false` | Skip Cell Ranger VDJ branch |
-| `--skip_mixcr` | `false` | Skip MiXCR branch |
+| `--skip_immcan` | `false` | Skip Immcanration branch |
 
 ---
 
@@ -179,14 +178,12 @@ results/
 │   │   ├── filtered_feature_bc_matrix/
 │   │   └── web_summary.html
 │   └── vdj/{sample}/outs/    ← Cell Ranger VDJ outputs
-├── mixcr/
-│   └── {sample}/             ← MiXCR clonotypes + SHM + isotype
+├── immcantation/
+│   └── {sample}/             ← Output from Immcantation for clonotypes + SHM + isotype
 ├── scafe/
 │   └── {sample}/             ← tCRE BED + UMI count matrix
-├── camotss/
-│   └── {sample}/             ← TC + CTSS outputs
 ├── reaptec/
-│   ├── {sample}/enhancers/   ← btcEnh BED files
+│   ├── enhancers/{sample}    ← btcEnh BED files
 │   └── pseudobulk/           ← DESeq2 CVID vs Control results
 └── seurat/
     ├── {sample}_seurat.rds   ← Seurat objects
@@ -198,7 +195,7 @@ results/
 ## Singularity Images
 
 All containers are pre-pulled to avoid runtime downloads on compute nodes.
-Images are stored in `--sif_dir` (default: `/home/arkku/group/ics/tools/singularity/`):
+Images are stored in `--sif_dir` (default: `[path]/singularity_cache/`):
 
 | File | Tool | Version |
 |---|---|---|
@@ -207,6 +204,7 @@ Images are stored in `--sif_dir` (default: `/home/arkku/group/ics/tools/singular
 | `multiqc.sif` | MultiQC | 1.21 |
 | `umi_tools.sif` | UMI-tools | 1.1.5 |
 | `mixcr_latest.sif` | [MiXCR](https://mixcr.com/mixcr/getting-started/docker/) | 4.0.0 |
+| `immcantation.sif` | [Immcantation](https://immcantation.readthedocs.io/en/stable/docker/intro.html) | 4.7.0 |
 | `cellranger.sif` | [Cell Ranger](https://hub.docker.com/r/litd/docker-cellranger) | 8.0.1 |
 
 **Seurat** (v5.4) is run via conda environment (`vscenv`) — no SIF required.
@@ -219,11 +217,11 @@ bash bin/pull_singularity_images.sh
 
 ---
 
-## HPC Notes (arkku cluster)
+## HPC Notes (slurm cluster)
 
 ```bash
 # Request compute node
-srun -p arkku --cpus-per-task=8 --mem=32G --time=08:00:00 --pty bash
+srun -p [partition_name] --cpus-per-task=8 --mem=32G --time=08:00:00 --pty bash
 
 # Activate conda environment
 conda activate vscenv
@@ -253,8 +251,9 @@ After running this pipeline, recommended next steps:
 If you use this pipeline, please cite:
 
 - Oguchi A. et al. (2024). *Science* 385(6704). https://doi.org/10.1126/science.add8394
+- Andersson R. et al. (2014) *Nature* 507. https://doi.org/10.1038/nature12787 
+- Lizio M. et al. (2015) *Genome Biology* https://doi.org/10.1186/s13059-014-0560-6
 - Moody J. et al. (2022). SCAFE. *Bioinformatics*. https://doi.org/10.1093/bioinformatics/btac450
-- Hou R. et al. (2023). CamoTSS. *Nat Commun* 14, 7240. https://doi.org/10.1038/s41467-023-42636-1
 - Hao Y. et al. (2024). Seurat v5. *Nature Methods*. https://doi.org/10.1038/s41592-024-02353-z
 
 ---
@@ -262,4 +261,4 @@ If you use this pipeline, please cite:
 ## License
 
 Apache-2.0 — see [LICENSE](LICENSE)
-To run MiXCR, we obtained license for academic use from MiXCR (https://mixcr.com/mixcr/getting-started/milm/)
+** Note **: The pipeline is temporarily skip MiXCR but in case you want to run MiXCR, obtaine license for academic use from MiXCR [here](https://mixcr.com/mixcr/getting-started/milm/)
